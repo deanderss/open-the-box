@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { layoutFor, place } from "@/lib/immersive";
+import { openInApp } from "@/lib/openInApp";
 
 function useViewport(active: boolean) {
   const [v, setV] = useState(() =>
@@ -143,16 +144,23 @@ export default function EmbedPlayer({
             <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-5xl shadow-chunky">📲</div>
             <h2 className="font-display text-2xl leading-tight sm:text-3xl">This one plays on {site}</h2>
             <p className="max-w-xs text-sm text-white/70">
-              {site} only lets this video play in its own app. Open it there, play it for everyone, then come back for the answers.
+              {site} only lets this video play in its own app. Tap the button to open it there, play it for everyone, then come back here for the answers.
             </p>
             {sourceUrl && (
-              <a className="btn btn-yellow" href={sourceUrl} target="_blank" rel="noreferrer">
-                Open on {site} ↗
-              </a>
+              <button type="button" className="btn btn-yellow touch-manipulation" onClick={() => openInApp(platform, sourceUrl)}>
+                Open in the {site} app ↗
+              </button>
             )}
-            <button className="text-xs text-white/50 underline hover:text-white/80" onClick={() => setForced(true)}>
-              Try playing it here anyway
-            </button>
+            <div className="flex flex-col items-center gap-1 text-xs text-white/50">
+              {sourceUrl && (
+                <a className="underline hover:text-white/80" href={sourceUrl} target="_blank" rel="noreferrer">
+                  Open in the browser instead
+                </a>
+              )}
+              <button type="button" className="underline hover:text-white/80" onClick={() => setForced(true)}>
+                Try playing it here anyway
+              </button>
+            </div>
           </div>
         )}
         {!showBlocked && (
