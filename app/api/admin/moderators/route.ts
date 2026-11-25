@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, body, HttpError, requireAdmin } from "@/lib/api";
 import { json } from "@/lib/util";
+import { purgeGroupUploads } from "@/lib/uploads";
 
 const BLOCKED = "876000h"; // ~100 years
 
@@ -40,7 +41,10 @@ export const DELETE = handle(async (req) => {
   const db = supabaseAdmin();
   const { data: owned } = await db.from("groups").select("id").eq("owner_id", id);
   if (q.get("boxes") === "delete") {
-    if (owned?.length) await db.from("groups").delete().in("id", owned.map((g) => g.id));
+    if (owned?.length) {
+      await purgeGroupUploads(owned.map((g) => g.id));
+      await db.from("groups").delete().in("id", owned.map((g) => g.id));
+    }
   } else {
     for (const g of owned || []) {
       const { data: co } = await db.from("group_moderators").select("moderator_id").eq("group_id", g.id).neq("moderator_id", id).limit(1).maybeSingle();

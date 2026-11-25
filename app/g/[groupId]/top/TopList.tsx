@@ -4,7 +4,7 @@ import Avatar from "@/components/Avatar";
 import EmbedPlayer from "@/components/EmbedPlayer";
 
 type Item = { id: string; platform: string; sourceUrl: string; embedUrl: string; avg: number; count: number; playedAt: string | null; sender: string; senderColor: string };
-const PLATFORM = { tiktok: "🎵 TikTok", instagram: "📸 Instagram", facebook: "📘 Facebook", youtube: "▶️ YouTube Shorts" } as Record<string, string>;
+const PLATFORM = { tiktok: "🎵 TikTok", instagram: "📸 Instagram", facebook: "📘 Facebook", youtube: "▶️ YouTube Shorts", upload: "🎞 Personal video" } as Record<string, string>;
 
 export default function TopList({ items }: { items: Item[] }) {
   const [open, setOpen] = useState<Item | null>(null);

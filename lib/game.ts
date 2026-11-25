@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
 import { checkMedia } from "./playable";
+import { purgeUpload } from "./uploads";
 
 export type SessionRow = {
   id: string;
@@ -154,6 +155,7 @@ export async function beginSession(s: SessionRow) {
 export async function nextVideo(s: SessionRow) {
   if (s.state === "playing") s = await doReveal(s);
   if (s.state !== "reveal") return { error: "Not ready for next" };
+  await purgeUpload(currentVideoId(s)); // a personal video has now been played and rated: delete its file
   return { session: await showVideoAt(s, s.current_index + 1) };
 }
 
@@ -162,6 +164,7 @@ export async function skipVideo(s: SessionRow) {
   if (!vid || (s.state !== "playing" && s.state !== "reveal")) return { error: "Nothing to skip" };
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
+  await purgeUpload(vid); // a skipped personal video is never shown again, so its file goes too
   return { session: await showVideoAt(s, s.current_index + 1) };
 }
 
@@ -201,6 +204,7 @@ export async function resumeSession(s: SessionRow) {
 export async function finishSession(s: SessionRow) {
   if (s.state === "lobby") return endSession(s);
   if (s.state === "playing") await doReveal(s);
+  await purgeUpload(currentVideoId(s)); // the last video has been played and rated
   return endSession(s);
 }
 
@@ -315,6 +319,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
         .select("id,platform,embed_url,source_url,avg_rating,rating_count,submitted_by")
         .in("id", shown)
         .eq("status", "played")
+        .neq("platform", "upload") // personal videos are deleted after they play
         .not("avg_rating", "is", null)
         .order("avg_rating", { ascending: false })
         .limit(1)

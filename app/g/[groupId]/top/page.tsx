@@ -14,6 +14,7 @@ export default async function TopPage({ params }: { params: { groupId: string } 
     .select("id,platform,source_url,embed_url,avg_rating,rating_count,played_at,submitted_by")
     .eq("group_id", group.id)
     .eq("status", "played")
+    .neq("platform", "upload") // personal videos are deleted after they play, so they never join the Top 100
     .gt("rating_count", 0)
     .order("avg_rating", { ascending: false })
     .order("rating_count", { ascending: false })

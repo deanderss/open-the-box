@@ -36,6 +36,69 @@ function useViewport(active: boolean) {
  */
 const SITE: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", facebook: "Facebook" };
 
+/**
+ * A personal video uploaded from someone's camera roll: a plain <video>, so unlike the social embeds nothing can be
+ * restricted, there is no cross-origin chrome to crop away, and it can fill the stage. Tries to start with sound
+ * (the host has just tapped something, so browsers usually allow it); if the browser refuses it starts muted and
+ * offers a "Tap for sound" button. Loops, like a reel.
+ */
+function UploadVideo({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [ready, setReady] = useState(false);
+  const [needsTap, setNeedsTap] = useState(false);
+  const [cover, setCover] = useState(false);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    v.muted = false;
+    v.play().catch(() => {
+      v.muted = true;
+      v.play().then(() => setNeedsTap(true)).catch(() => {});
+    });
+  }, [src]);
+  return (
+    <>
+      <video
+        ref={ref}
+        src={src}
+        playsInline
+        loop
+        controls
+        preload="auto"
+        onCanPlay={() => setReady(true)}
+        onLoadedMetadata={(e) => {
+          // fill the screen when the video is close to the stage's shape, otherwise show all of it
+          const v = e.currentTarget;
+          const box = v.getBoundingClientRect();
+          if (v.videoWidth && v.videoHeight && box.width && box.height) {
+            const ratio = v.videoWidth / v.videoHeight / (box.width / box.height);
+            setCover(ratio > 0.8 && ratio < 1.25);
+          }
+        }}
+        className={`absolute inset-0 h-full w-full bg-black ${cover ? "object-cover" : "object-contain"}`}
+      />
+      {!ready && (
+        <div className="pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black text-center text-white">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
+          <p className="font-display text-lg">Loading the video…</p>
+        </div>
+      )}
+      {needsTap && (
+        <button
+          type="button"
+          className="btn btn-yellow btn-sm absolute bottom-16 left-1/2 z-[6] -translate-x-1/2"
+          onClick={() => {
+            if (ref.current) ref.current.muted = false;
+            setNeedsTap(false);
+          }}
+        >
+          🔊 Tap for sound
+        </button>
+      )}
+    </>
+  );
+}
+
 export default function EmbedPlayer({
   embedUrl,
   platform,
@@ -65,6 +128,7 @@ export default function EmbedPlayer({
   const site = SITE[platform] ?? "the site";
   const [forced, setForced] = useState(false); // "try it here anyway"
   const showBlocked = !!blocked && !forced;
+  const isUpload = platform === "upload"; // plays in a native <video>, no iframe, no slow-load timers
   const frameKey = `${embedUrl}#${reloadKey}`;
 
   // Loading state: the embed is a cross-origin iframe, so all we can see is its `load` event. Show a spinner until
@@ -79,7 +143,7 @@ export default function EmbedPlayer({
     setLoaded(false);
     setSettled(false);
     setSlow(false);
-    if (showBlocked) return; // nothing is loading, so no slow/retry timers
+    if (showBlocked || isUpload) return; // no iframe is loading, so no slow/retry timers
     const slowT = setTimeout(() => setSlow(true), 10000);
     const retryT = setTimeout(() => {
       if (!loadedRef.current && reloadKey === 0) onReload?.();
@@ -89,7 +153,7 @@ export default function EmbedPlayer({
       clearTimeout(retryT);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameKey, showBlocked]);
+  }, [frameKey, showBlocked, isUpload]);
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => setSettled(true), 1800);
@@ -99,7 +163,7 @@ export default function EmbedPlayer({
   const vp = useViewport(fullscreen);
   const layout = useMemo(() => layoutFor(platform, embedUrl, aspect), [platform, embedUrl, aspect]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
-  const immersive = fullscreen && placed && !showBlocked;
+  const immersive = fullscreen && placed && !showBlocked && !isUpload;
 
   // lock page scroll / rubber-banding behind the stage
   useEffect(() => {
@@ -167,7 +231,8 @@ export default function EmbedPlayer({
             </div>
           </div>
         )}
-        {!showBlocked && (
+        {isUpload && <UploadVideo key={frameKey} src={embedUrl} />}
+        {!showBlocked && !isUpload && (
         <iframe
           key={frameKey}
           src={embedUrl}
@@ -194,7 +259,7 @@ export default function EmbedPlayer({
           referrerPolicy="strict-origin-when-cross-origin"
         />
         )}
-        {!showBlocked && !settled && (
+        {!showBlocked && !isUpload && !settled && (
           <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
             <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
@@ -229,7 +294,7 @@ export default function EmbedPlayer({
         </div>
       )}
 
-      {sourceUrl && !fullscreen && !showBlocked && (
+      {sourceUrl && !fullscreen && !showBlocked && !isUpload && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/50 underline hover:text-white/80">
           Not loading? Open on {site} ↗
         </a>

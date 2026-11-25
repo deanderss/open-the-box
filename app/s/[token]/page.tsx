@@ -1,12 +1,32 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import Avatar from "@/components/Avatar";
 import BoxMascot, { Mood } from "@/components/BoxMascot";
 
 type Roster = { id: string; name: string; color: string }[];
-type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full"; message?: string };
+type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full" | "error"; message?: string };
+
+// Personal videos from the camera roll (see lib/uploads.ts for the server side of these limits)
+const MAX_UPLOAD_MB = 50;
+const MAX_FILES = 5;
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|3gp)$/i;
+const isVideoFile = (f: File) => f.type.startsWith("video/") || VIDEO_EXT.test(f.name);
+
+/** PUT the file to its one-time signed URL, reporting progress (fetch can't do upload progress). */
+function putFile(url: string, file: File, type: string, onProgress: (frac: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", url);
+    x.setRequestHeader("Content-Type", type);
+    x.setRequestHeader("x-upsert", "false");
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => (x.status < 300 ? resolve() : reject(new Error(x.status === 413 ? `That video is over ${MAX_UPLOAD_MB} MB` : `Upload failed (${x.status})`)));
+    x.onerror = () => reject(new Error("Lost the connection while uploading"));
+    x.send(file);
+  });
+}
 type Verdict = "rock" | "meh" | "stink";
 
 const STATUS: Record<Result["status"], { icon: string; text: string }> = {
@@ -14,6 +34,7 @@ const STATUS: Record<Result["status"], { icon: string; text: string }> = {
   duplicate: { icon: "🙃", text: "Someone beat you to it, already in the box" },
   invalid: { icon: "❌", text: "Not a TikTok, Instagram, Facebook or YouTube Shorts video" },
   full: { icon: "📦", text: "Box is stuffed full" },
+  error: { icon: "⚠️", text: "That one didn't make it in" },
 };
 
 const TAUNTS = [
@@ -80,6 +101,11 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
   const [formErr, setFormErr] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [links, setLinks] = useState<string[]>([""]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileMsg, setFileMsg] = useState<string | null>(null);
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadLabel, setUploadLabel] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<"form" | "scanning" | "result">("form");
   const [results, setResults] = useState<Result[] | null>(null);
   const [verdict, setVerdict] = useState<Verdict>("rock");
@@ -112,7 +138,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
   }, [phase]);
 
   const me = roster.find((p) => p.id === playerId);
-  const filled = links.filter((l) => l.trim()).length;
+  const filled = links.filter((l) => l.trim()).length + files.length;
   const added = results?.filter((r) => r.status === "added").length ?? 0;
 
   const mood: Mood = useMemo(() => {
@@ -134,27 +160,75 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
     }, 1400);
   }
 
+  function pickFiles(list: FileList | null) {
+    if (!list) return;
+    const next = [...files];
+    const notes: string[] = [];
+    for (const f of Array.from(list)) {
+      if (!isVideoFile(f)) notes.push(`${f.name} isn't a video`);
+      else if (f.size > MAX_UPLOAD_MB * 1048576) notes.push(`${f.name} is ${(f.size / 1048576).toFixed(0)} MB. The limit is ${MAX_UPLOAD_MB} MB, so trim it or pick a shorter clip`);
+      else if (next.length >= MAX_FILES) notes.push(`Only ${MAX_FILES} videos at a time`);
+      else next.push(f);
+    }
+    setFiles(next);
+    setFileMsg(notes.length ? notes.join(". ") : null);
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  /** Upload one personal video: get a signed URL, send the file straight to storage, then add it to the box. */
+  async function uploadOne(file: File, onProgress: (frac: number) => void): Promise<Result> {
+    const post = async (path: string, payload: object) => {
+      const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: params.token, playerId, ...payload }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "Something went wrong");
+      return d;
+    };
+    try {
+      const start = await post("/api/upload/start", { filename: file.name, contentType: file.type, size: file.size });
+      await putFile(start.signedUrl, file, start.contentType, onProgress);
+      const fin = await post("/api/upload/finish", { path: start.path });
+      return { url: file.name, status: fin.status, message: fin.status === "added" ? "Your video is in the box. It disappears after it has been played." : undefined };
+    } catch (err) {
+      return { url: file.name, status: "error", message: err instanceof Error ? err.message : "Upload failed" };
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setFormErr(null);
     setPhase("scanning");
+    setUploadPct(0);
     const minWait = new Promise((r) => setTimeout(r, 3200));
+    const linkList = links.filter((l) => l.trim());
     try {
-      const res = await fetch("/api/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: params.token, playerId, links }),
-      });
-      const d = await res.json();
-      await minWait;
-      if (!res.ok) {
-        setFormErr(d.error);
-        setPhase("form");
-        return;
+      const fileResults: Result[] = [];
+      for (let i = 0; i < files.length; i++) {
+        setUploadLabel(files.length > 1 ? `Uploading video ${i + 1} of ${files.length}…` : "Uploading your video…");
+        fileResults.push(await uploadOne(files[i], (frac) => setUploadPct(((i + frac) / files.length) * 100)));
+        setUploadPct(((i + 1) / files.length) * 100);
       }
-      setResults(d.results);
+      let linkResults: Result[] = [];
+      if (linkList.length) {
+        const res = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: params.token, playerId, links: linkList }),
+        });
+        const d = await res.json();
+        if (!res.ok) {
+          await minWait;
+          setFormErr(d.error);
+          setFiles(files.filter((_, i) => fileResults[i]?.status !== "added")); // keep only the ones that didn't go in
+          setPhase("form");
+          return;
+        }
+        linkResults = d.results;
+      }
+      await minWait;
+      const all = [...linkResults, ...fileResults];
+      setResults(all);
       setPhase("result");
-      if (d.added > 0) reveal(rollVerdict());
+      if (all.some((r) => r.status === "added")) reveal(rollVerdict());
     } catch {
       setFormErr("Couldn't reach the box. Check your connection and try again.");
       setPhase("form");
@@ -275,6 +349,30 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
               <p className="text-center text-xs text-white/50">Tip: paste a bunch of links at once and they&apos;ll split up automatically.</p>
             </div>
 
+            <div className="card space-y-3 p-4">
+              <label className="label">Or add your own video 🎞 (from your camera roll)</label>
+              <input ref={fileInput} type="file" accept="video/*" multiple className="hidden" onChange={(e) => pickFiles(e.target.files)} />
+              {files.map((f, i) => (
+                <div key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-2xl bg-black/30 px-3 py-2 text-sm">
+                  <span className="text-xl">🎞</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{f.name}</span>
+                    <span className="block text-xs text-white/50">{(f.size / 1048576).toFixed(1)} MB</span>
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm px-3" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label="Remove video">
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {files.length < MAX_FILES && (
+                <button type="button" className="btn btn-ghost btn-sm w-full" onClick={() => fileInput.current?.click()}>
+                  🎞 {files.length ? "Add another video" : "Pick a video from your phone"}
+                </button>
+              )}
+              {fileMsg && <p className="rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-xs text-[#FFB3B3]">{fileMsg}</p>}
+              <p className="text-center text-xs text-white/50">Up to {MAX_UPLOAD_MB} MB each (about 30 seconds of phone video). It plays once in the game, then it&apos;s deleted for good.</p>
+            </div>
+
             {formErr && <p className="rounded-xl bg-[#FF5E5E]/20 p-3 text-center text-sm text-[#FFB3B3]">{formErr}</p>}
             <motion.button whileTap={{ scale: 0.95 }} className="btn btn-pink w-full text-2xl" disabled={filled === 0}>
               {filled === 0 ? "Feed me videos 📦" : `Drop ${filled} in the box 📦`}
@@ -287,8 +385,14 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
           <motion.div key="scan" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="card mt-6 text-center">
             <p className="title text-2xl">🤖 The AI is watching your videos…</p>
             <div className="mt-5 h-5 overflow-hidden rounded-full border-4 border-black/30 bg-black/30">
-              <motion.div className="h-full bg-gradient-to-r from-bubble via-sunny to-mint" initial={{ width: "0%" }} animate={{ width: "100%" }} transition={{ duration: 3, ease: "easeInOut" }} />
+              {files.length > 0 ? (
+                <div className="h-full bg-gradient-to-r from-bubble via-sunny to-mint transition-[width] duration-300" style={{ width: `${Math.max(4, uploadPct)}%` }} />
+              ) : (
+                <motion.div className="h-full bg-gradient-to-r from-bubble via-sunny to-mint" initial={{ width: "0%" }} animate={{ width: "100%" }} transition={{ duration: 3, ease: "easeInOut" }} />
+              )}
             </div>
+            {files.length > 0 && <p className="mt-3 font-display text-lg text-sunny">{uploadLabel} {Math.round(uploadPct)}%</p>}
+            {files.length > 0 && <p className="text-xs text-white/50">Keep this screen open until it finishes.</p>}
             <AnimatePresence mode="wait">
               <motion.p key={scanMsg} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="mt-4 font-display text-lg text-white/80">
                 {scanMsg}
@@ -350,6 +454,8 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 onClick={() => {
                   setResults(null);
                   setLinks([""]);
+                  setFiles([]);
+                  setFileMsg(null);
                   setShowVerdict(false);
                   setPhase("form");
                 }}

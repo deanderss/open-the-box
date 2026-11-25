@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, HttpError, requireAdmin } from "@/lib/api";
 import { json } from "@/lib/util";
+import { purgeGroupUploads } from "@/lib/uploads";
 
 /** Admin can delete any moderator's box (players, videos, sessions and scores go with it). */
 export const DELETE = handle(async (req) => {
@@ -10,6 +11,7 @@ export const DELETE = handle(async (req) => {
   const db = supabaseAdmin();
   const { data: g } = await db.from("groups").select("id").eq("id", id).maybeSingle();
   if (!g) throw new HttpError(404, "Box not found");
+  await purgeGroupUploads([id]);
   const { error } = await db.from("groups").delete().eq("id", id);
   if (error) throw new HttpError(400, error.message);
   return json({ ok: true });
