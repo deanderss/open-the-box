@@ -54,7 +54,13 @@ export const POST = handle(async (req) => {
   );
   for (const { raw, parsed, playable } of resolved) {
     if (!parsed) {
-      results.push({ url: raw, status: "invalid" });
+      results.push({
+        url: raw,
+        status: "invalid",
+        message: needsExpansion(raw)
+          ? "We couldn't open that share link. Open the video in your browser, copy the address from the address bar and paste that instead"
+          : undefined,
+      });
       continue;
     }
     if (playable === "restricted" || playable === "gone") {

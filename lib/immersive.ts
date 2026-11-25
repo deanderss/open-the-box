@@ -15,10 +15,20 @@ export type Layout =
   /** Let the embed fill the whole viewport itself (YouTube adapts to any size). */
   | { kind: "fill" };
 
-export function layoutFor(platform: string, embedUrl: string): Layout {
+/**
+ * `aspect` = video height / width, when known (Instagram reports it in its embed page).
+ * The Instagram media box is 540x674 (4:5) under a 54px header. A video at least that tall fills the box's height
+ * and is centred with side bars, so its width is 674/aspect. Anything wider/shorter than 4:5 (square, landscape)
+ * sits in a box we can't predict, so those are shown whole rather than guessed at.
+ */
+export function layoutFor(platform: string, embedUrl: string, aspect?: number): Layout {
   if (platform === "instagram") {
-    // Reels are always 9:16 inside a 4:5 media box. Posts/IGTV vary, so show those whole.
-    if (/\/reel\//.test(embedUrl)) return { kind: "crop", iw: 540, ih: 1000, rect: { x: 80, y: 54, w: 380, h: 674 }, boost: 1.25 };
+    const BOX_H = 674;
+    const a = aspect && aspect > 0 ? aspect : /\/reel\//.test(embedUrl) ? 16 / 9 : 0; // unknown reel: assume 9:16
+    if (a >= 1.24) {
+      const w = Math.min(540, BOX_H / a);
+      return { kind: "crop", iw: 540, ih: 1000, rect: { x: (540 - w) / 2, y: 54, w, h: BOX_H }, boost: a >= 1.7 ? 1.25 : 1 };
+    }
     return { kind: "crop", iw: 540, ih: 1000, rect: { x: 0, y: 0, w: 540, h: 1000 }, boost: 1 };
   }
   if (platform === "tiktok") {
@@ -28,7 +38,10 @@ export function layoutFor(platform: string, embedUrl: string): Layout {
   if (platform === "facebook") {
     // The plugin renders a 9:16 player (500x889 at width=500). Reels fill it edge to edge; the Share button
     // sits ~25px from the right edge, so don't crop more than ~1.22x (it still fills a tall phone).
-    return { kind: "crop", iw: 500, ih: 889, rect: { x: 0, y: 0, w: 500, h: 889 }, boost: 1.22 };
+    // Facebook gives no hint about orientation, so only links that came in as /reel/ get the crop-to-fill boost;
+    // watch/videos links are shown whole (a landscape video then simply sits letterboxed).
+    const isReel = /reel(%2F|\/)/i.test(embedUrl);
+    return { kind: "crop", iw: 500, ih: 889, rect: { x: 0, y: 0, w: 500, h: 889 }, boost: isReel ? 1.22 : 1 };
   }
   if (platform === "youtube") {
     // In a portrait iframe the embed switches to the Shorts-style player (Shorts logo, like/share rail on the

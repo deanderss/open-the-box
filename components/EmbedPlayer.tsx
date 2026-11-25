@@ -39,6 +39,7 @@ export default function EmbedPlayer({
   embedUrl,
   platform,
   sourceUrl,
+  aspect,
   className = "",
   fullscreen = false,
   overlay,
@@ -48,6 +49,8 @@ export default function EmbedPlayer({
   embedUrl: string;
   platform: string;
   sourceUrl?: string;
+  /** video height / width when the server knows it (Instagram) */
+  aspect?: number;
   className?: string;
   fullscreen?: boolean;
   overlay?: ReactNode;
@@ -87,7 +90,7 @@ export default function EmbedPlayer({
   }, [loaded]);
 
   const vp = useViewport(fullscreen);
-  const layout = useMemo(() => layoutFor(platform, embedUrl), [platform, embedUrl]);
+  const layout = useMemo(() => layoutFor(platform, embedUrl, aspect), [platform, embedUrl, aspect]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
   const immersive = fullscreen && placed;
 

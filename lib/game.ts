@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
-import { checkPlayable } from "./playable";
+import { checkMedia, checkPlayable } from "./playable";
 
 export type SessionRow = {
   id: string;
@@ -263,6 +263,11 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     const { data: v } = await db().from("videos").select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count").eq("id", vid).single();
     if (v) {
       video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
+      if (viewer.kind === "host" && v.platform === "instagram") {
+        // Instagram tells us the video's shape; the fullscreen crop needs it (cached, so this is cheap after the first look).
+        const m = await checkMedia({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string }).catch(() => null);
+        if (m?.aspect) video.aspect = m.aspect;
+      }
       sender = v.submitted_by as string | null;
       if (s.state === "reveal") Object.assign(video, { avgRating: v.avg_rating, ratingCount: v.rating_count });
     }

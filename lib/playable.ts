@@ -12,7 +12,13 @@
 
 export type Playability = "ok" | "restricted" | "gone" | "unknown";
 
-type Cached = { v: Playability; t: number };
+export interface Media {
+  playability: Playability;
+  /** height / width of the video when the platform tells us (Instagram), so the fullscreen crop can fit it */
+  aspect?: number;
+}
+
+type Cached = { v: Media; t: number };
 const cache = new Map<string, Cached>();
 const TTL_MS = 30 * 60 * 1000;
 const UNKNOWN_TTL_MS = 2 * 60 * 1000;
@@ -30,16 +36,30 @@ async function get(url: string, headers: Record<string, string> = {}, ms = 5000)
   }
 }
 
-async function instagram(embedUrl: string): Promise<Playability> {
-  // photo posts (/p/) have no video to look for
-  if (!/\/(reel|tv)\//.test(embedUrl)) return "ok";
+async function instagram(embedUrl: string): Promise<Media> {
+  // /reel/, /p/ and /tv/ serve the same embed page for the same shortcode.
+  const res = await get(embedUrl, { "User-Agent": MOBILE_UA, "Accept-Language": "en-US,en;q=0.9" });
+  if (res.status === 404) return { playability: "gone" };
+  const html = await res.text();
+  if (/may be broken, or the post may have been removed/i.test(html)) return { playability: "gone" };
+  const d = html.match(/\\?"dimensions\\?":\{\\?"height\\?":(\d+),\\?"width\\?":(\d+)\}/);
+  const aspect = d && Number(d[2]) > 0 ? Number(d[1]) / Number(d[2]) : undefined;
+  if (/\\?"video_url\\?"/.test(html)) return { playability: "ok", aspect };
+  if (/class="WatchOnInstagram"/.test(html)) return { playability: "restricted", aspect };
+  // photo / carousel posts carry no video_url and no "Watch on Instagram" button: they just display
+  if (/\/(p)\//.test(embedUrl) && html.length > 20000) return { playability: "ok", aspect };
+  return { playability: "unknown", aspect };
+}
+
+async function facebook(embedUrl: string): Promise<Playability> {
+  // The plugin page itself says so when a video can't be embedded (music rights etc.) or is gone.
+  // Only the phone layout is reliable for this: the desktop page always contains the phrase in its scripts.
   const res = await get(embedUrl, { "User-Agent": MOBILE_UA, "Accept-Language": "en-US,en;q=0.9" });
   if (res.status === 404) return "gone";
   const html = await res.text();
-  if (/may be broken, or the post may have been removed/i.test(html)) return "gone";
-  if (/"video_url"/.test(html) || /\\"video_url\\"/.test(html)) return "ok";
-  if (/class="WatchOnInstagram"/.test(html)) return "restricted";
-  return "unknown";
+  if (/can.t be embedded|may contain content owned by someone else/i.test(html)) return "restricted";
+  if (/Video Unavailable/i.test(html) && html.length < 55000) return "gone";
+  return html.length > 55000 ? "ok" : "unknown";
 }
 
 async function youtube(sourceUrl: string): Promise<Playability> {
@@ -60,26 +80,31 @@ async function tiktok(sourceUrl: string): Promise<Playability> {
   return "unknown";
 }
 
-export async function checkPlayable(v: { platform: string; embedUrl: string; sourceUrl: string }): Promise<Playability> {
+export async function checkMedia(v: { platform: string; embedUrl: string; sourceUrl: string }): Promise<Media> {
   const key = v.embedUrl;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.t < (hit.v === "unknown" ? UNKNOWN_TTL_MS : TTL_MS)) return hit.v;
-  let result: Playability = "unknown";
+  if (hit && Date.now() - hit.t < (hit.v.playability === "unknown" ? UNKNOWN_TTL_MS : TTL_MS)) return hit.v;
+  let result: Media = { playability: "unknown" };
   try {
     if (v.platform === "instagram") result = await instagram(v.embedUrl);
-    else if (v.platform === "youtube") result = await youtube(v.sourceUrl);
-    else if (v.platform === "tiktok") result = await tiktok(v.sourceUrl);
+    else if (v.platform === "youtube") result = { playability: await youtube(v.sourceUrl) };
+    else if (v.platform === "tiktok") result = { playability: await tiktok(v.sourceUrl) };
+    else if (v.platform === "facebook") result = { playability: await facebook(v.embedUrl) };
   } catch {
-    result = "unknown"; // fail open
+    result = { playability: "unknown" }; // fail open
   }
   cache.set(key, { v: result, t: Date.now() });
   if (cache.size > 500) cache.delete(cache.keys().next().value as string);
   return result;
 }
 
+export async function checkPlayable(v: { platform: string; embedUrl: string; sourceUrl: string }): Promise<Playability> {
+  return (await checkMedia(v)).playability;
+}
+
 /** Plain-English reason shown to whoever submitted the link. */
 export function playabilityMessage(p: Playability, platform: string) {
-  const name = platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "that site";
+  const name = platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
   if (p === "gone") return `${name} says this video is gone or private, so it can't be played`;
   return platform === "instagram"
     ? "Instagram won't play this reel inside other apps (only on Instagram). Pick a different one!"

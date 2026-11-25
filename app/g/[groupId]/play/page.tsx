@@ -252,6 +252,7 @@ function HostInner({ groupId }: { groupId: string }) {
               embedUrl={state.video.embedUrl}
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
+              aspect={state.video.aspect}
               fullscreen={fullscreen}
               overlay={
                 <div className="text-white">

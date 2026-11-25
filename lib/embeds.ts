@@ -33,11 +33,23 @@ function isFacebookShare(u: URL) {
   return (h === "facebook.com" || h === "fb.com") && /^\/share\/(r|v|p)\//.test(u.pathname);
 }
 
+/** Instagram's Share button gives instagram.com/share/CODE (or /share/reel/CODE, /share/p/CODE): a redirect, and CODE is not the shortcode. */
+function isInstagramShare(u: URL) {
+  const h = host(u);
+  return (h === "instagram.com" || h === "instagr.am") && u.pathname.startsWith("/share/");
+}
+
 export function needsExpansion(raw: string) {
   const u = safeUrl(raw);
   if (!u) return false;
   const h = host(u);
-  return SHORT_HOSTS.includes(h) || (h === "tiktok.com" && u.pathname.startsWith("/t/")) || isFacebookShare(u);
+  return SHORT_HOSTS.includes(h) || (h === "tiktok.com" && u.pathname.startsWith("/t/")) || isFacebookShare(u) || isInstagramShare(u);
+}
+
+/** True when a redirect chain ended on a login wall instead of the content. */
+function isLoginWall(raw: string) {
+  const u = safeUrl(raw);
+  return !!u && /^\/(accounts\/)?login(\/|$)/.test(u.pathname);
 }
 
 /**
@@ -69,6 +81,7 @@ async function resolveFacebookShare(raw: string): Promise<string> {
 export async function expandUrl(raw: string): Promise<string> {
   const su = safeUrl(raw);
   if (su && isFacebookShare(su)) return resolveFacebookShare(raw);
+  const isFbWatch = !!su && host(su) === "fb.watch";
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 6000);
@@ -78,7 +91,12 @@ export async function expandUrl(raw: string): Promise<string> {
       headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
     });
     clearTimeout(t);
-    return res.url || raw;
+    const final = res.url || raw;
+    if (isLoginWall(final)) {
+      // fb.watch bounces scripts to a login page; Facebook's own crawler is shown the real URL.
+      return isFbWatch ? resolveFacebookShare(raw) : raw;
+    }
+    return final;
   } catch {
     return raw;
   }
@@ -93,7 +111,11 @@ export function parseVideoUrl(raw: string): ParsedVideo | null {
 
   // TikTok: tiktok.com/@user/video/1234567890  or /embed/v2/123
   if (h === "tiktok.com" || h.endsWith(".tiktok.com")) {
-    const m = path.match(/\/video\/(\d{8,25})/) || path.match(/\/embed(?:\/v2)?\/(\d{8,25})/) || path.match(/\/photo\/(\d{8,25})/);
+    const m =
+      path.match(/\/video\/(\d{8,25})/) ||
+      path.match(/\/embed(?:\/v2)?\/(\d{8,25})/) ||
+      path.match(/\/photo\/(\d{8,25})/) ||
+      path.match(/^\/v\/(\d{8,25})(?:\.html)?\/?$/); // m.tiktok.com/v/ID.html
     if (!m) return null;
     const id = m[1];
     const user = path.match(/\/@([^/]+)/)?.[1];
@@ -106,6 +128,8 @@ export function parseVideoUrl(raw: string): ParsedVideo | null {
 
   // Instagram: /reel/CODE, /reels/CODE, /p/CODE, /tv/CODE (optionally /username/reel/CODE)
   if (h === "instagram.com" || h === "instagr.am") {
+    // /share/... must be expanded first; its code is not a shortcode, so never guess.
+    if (path.startsWith("/share/")) return null;
     const m = path.match(/\/(reel|reels|p|tv)\/([A-Za-z0-9_-]{5,})/);
     if (!m) return null;
     const kind = m[1] === "reels" ? "reel" : m[1];
@@ -138,8 +162,8 @@ export function parseVideoUrl(raw: string): ParsedVideo | null {
     const watchV = u.searchParams.get("v");
     if (reel) canonical = `https://www.facebook.com/reel/${reel[1]}`;
     else if (vid) canonical = `https://www.facebook.com${path.replace(/\/$/, "")}`;
-    else if (path.startsWith("/watch") && watchV) canonical = `https://www.facebook.com/watch/?v=${watchV}`;
-    else if (h === "fb.watch" && path.length > 2) canonical = `https://fb.watch${path}`;
+    else if ((path.startsWith("/watch") || path.startsWith("/video.php")) && watchV && /^\d+$/.test(watchV)) canonical = `https://www.facebook.com/watch/?v=${watchV}`;
+    else if (h === "fb.watch" && path.length > 2 && !isLoginWall(raw)) canonical = `https://fb.watch${path}`;
     else if (path.startsWith("/share/r/") || path.startsWith("/share/v/")) canonical = `https://www.facebook.com${path}`;
     if (!canonical) return null;
     return {
