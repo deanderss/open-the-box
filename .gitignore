@@ -1,0 +1,12 @@
+node_modules
+.next
+.env*.local
+.vercel
+supabase/.temp
+.env*
+.vercel
+.supabase-ref
+.live-url
+deploy.err
+vercel-env.err
+vercel-phase.log
