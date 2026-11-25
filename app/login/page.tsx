@@ -15,6 +15,7 @@ function LoginInner() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/slots").then((r) => r.json()).then((d) => setSlots(d.remaining ?? 0)).catch(() => setSlots(0));
@@ -23,6 +24,7 @@ function LoginInner() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setNotice(null);
     setBusy(true);
     try {
       if (mode === "signup") {
@@ -36,9 +38,19 @@ function LoginInner() {
           }
           throw new Error(d.error || "Sign up failed");
         }
+        if (d.pending) {
+          // Needs admin approval before they can log in.
+          setPassword("");
+          setMode("login");
+          setNotice("🎉 Request sent! You'll be able to log in once the admin approves you. Try again later with the same email and password.");
+          return;
+        }
       }
       const { error } = await supabaseBrowser().auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw new Error(error.message === "Invalid login credentials" ? "Wrong email or password" : error.message);
+      if (error) {
+        if (/banned/i.test(error.message)) throw new Error("⏳ Your moderator request is still waiting for approval. Check back soon!");
+        throw new Error(error.message === "Invalid login credentials" ? "Wrong email or password" : error.message);
+      }
       window.location.href = next.startsWith("/") ? next : "/groups";
     } catch (e) {
       setErr((e as Error).message);
@@ -75,7 +87,7 @@ function LoginInner() {
           <div className="mb-4 rounded-2xl bg-black/30 p-3 text-sm text-white/80">🔒 The box is full: all moderator seats are taken. Ask your admin to free one up.</div>
         )}
         {!full && slots !== null && mode === "signup" && (
-          <div className="mb-4 rounded-2xl bg-black/30 p-3 text-sm text-white/80">🎟 {slots} moderator seat{slots === 1 ? "" : "s"} left</div>
+          <div className="mb-4 rounded-2xl bg-black/30 p-3 text-sm text-white/80">🎟 {slots} moderator seat{slots === 1 ? "" : "s"} left. New moderators need admin approval before they can log in.</div>
         )}
         <form onSubmit={submit} className="space-y-4">
           {mode === "signup" && (
@@ -92,9 +104,10 @@ function LoginInner() {
             <label className="label">Password</label>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={mode === "signup" ? 8 : 1} autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder="••••••••" />
           </div>
+          {notice && <p className="rounded-xl bg-mint/20 p-3 text-sm text-mint">{notice}</p>}
           {err && <p className="rounded-xl bg-[#FF5E5E]/20 p-3 text-sm text-[#FFB3B3]">{err}</p>}
           <button className={`btn w-full ${mode === "login" ? "btn-yellow" : "btn-pink"}`} disabled={busy}>
-            {busy ? "One sec…" : mode === "login" ? "Let's go!" : "Create moderator account"}
+            {busy ? "One sec…" : mode === "login" ? "Let's go!" : "Request moderator access"}
           </button>
         </form>
         {mode === "login" && (

@@ -3,14 +3,65 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 type M = { id: string; name: string; email: string; isAdmin: boolean; createdAt: string; boxes: number };
+type Req = { id: string; name: string; email: string; status: "pending" | "approved" | "denied"; ip: string | null; userAgent: string | null; createdAt: string; decidedAt: string | null };
 
-export default function AdminPanel({ meId, cap, mods }: { meId: string; cap: number; mods: M[] }) {
+const fmt = (d: string) => new Date(d).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+export default function AdminPanel({ meId, cap, mods, requests }: { meId: string; cap: number; mods: M[]; requests: Req[] }) {
   const router = useRouter();
   const [newCap, setNewCap] = useState(cap);
   const [msg, setMsg] = useState<string | null>(null);
-  const used = mods.length;
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const pending = requests.filter((r) => r.status === "pending");
+  const history = requests.filter((r) => r.status !== "pending");
+  const used = mods.length + pending.length;
+
+  async function decide(r: Req, action: "approve" | "deny") {
+    if (action === "deny" && !confirm(`Deny ${r.name} (${r.email})? Their account will be deleted.`)) return;
+    setBusyId(r.id);
+    const res = await fetch("/api/admin/requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: r.id, action }) });
+    if (!res.ok) alert((await res.json()).error);
+    setBusyId(null);
+    router.refresh();
+  }
+
   return (
     <>
+      <div className="card mt-6 border-2 border-sunny/40">
+        <div className="flex items-center justify-between">
+          <p className="title text-2xl">📬 Pending requests</p>
+          <span className={`rounded-full px-3 py-1 font-bold ${pending.length ? "bg-bubble text-white" : "bg-black/30 text-white/60"}`}>{pending.length}</span>
+        </div>
+        {pending.length === 0 ? (
+          <p className="mt-3 text-white/60">Nobody is waiting. You&apos;ll get an email when someone asks to join.</p>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {pending.map((r) => (
+              <li key={r.id} className="rounded-2xl bg-black/25 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-display text-lg">{r.name}</p>
+                    <p className="break-all text-sm text-white/80">{r.email}</p>
+                    <p className="mt-1 text-xs text-white/50">
+                      Requested {fmt(r.createdAt)} · IP {r.ip || "unknown"}
+                    </p>
+                    {r.userAgent && <p className="mt-0.5 break-words text-xs text-white/40">{r.userAgent}</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn btn-mint btn-sm" disabled={busyId === r.id} onClick={() => decide(r, "approve")}>
+                      Approve
+                    </button>
+                    <button className="btn btn-danger btn-sm" disabled={busyId === r.id} onClick={() => decide(r, "deny")}>
+                      Deny
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="card mt-6">
         <div className="flex items-center justify-between">
           <p className="title text-2xl">
@@ -39,7 +90,9 @@ export default function AdminPanel({ meId, cap, mods }: { meId: string; cap: num
           {msg && <span className="pb-2 text-sm text-white/70">{msg}</span>}
         </form>
       </div>
-      <ul className="mt-6 space-y-3">
+
+      <h2 className="title mt-8 text-2xl">Moderators</h2>
+      <ul className="mt-3 space-y-3">
         {mods.map((m) => (
           <li key={m.id} className="card flex items-center justify-between p-4">
             <div>
@@ -66,6 +119,26 @@ export default function AdminPanel({ meId, cap, mods }: { meId: string; cap: num
           </li>
         ))}
       </ul>
+
+      {history.length > 0 && (
+        <>
+          <h2 className="title mt-8 text-2xl">Request history</h2>
+          <ul className="mt-3 space-y-2">
+            {history.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-black/20 px-4 py-3 text-sm">
+                <div className="min-w-0">
+                  <span className="font-bold">{r.name}</span> <span className="break-all text-white/60">{r.email}</span>
+                  <p className="text-xs text-white/40">
+                    Requested {fmt(r.createdAt)}
+                    {r.decidedAt ? ` · decided ${fmt(r.decidedAt)}` : ""} · IP {r.ip || "unknown"}
+                  </p>
+                </div>
+                <span className={`rounded-full px-3 py-0.5 text-xs font-bold ${r.status === "approved" ? "bg-mint text-night" : "bg-[#FF5E5E] text-white"}`}>{r.status}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </>
   );
 }
