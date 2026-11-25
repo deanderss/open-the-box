@@ -115,9 +115,10 @@ export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Pr
 }
 
 /**
- * Show the video at `index`. Videos that can't play inside the game (an Instagram reel that only plays on
- * Instagram, a removed video, ...) are skipped automatically so the host never lands on a black screen.
- * `log.skipped` reports how many were passed over. If a check can't tell, the video is played.
+ * Show the video at `index`. Removed/private videos are skipped automatically. Videos that exist but only play on
+ * their own site (an Instagram reel with embedding off) are NOT skipped: the host screen shows an "open it on
+ * Instagram" panel for those and the host plays it in the app. `log.skipped` reports how many were passed over.
+ * If a check can't tell, the video is played.
  */
 async function showVideoAt(s: SessionRow, index: number, log?: { skipped: number }) {
   while (index < s.video_order.length) {
@@ -125,7 +126,7 @@ async function showVideoAt(s: SessionRow, index: number, log?: { skipped: number
     const { data: v } = await db().from("videos").select("platform,embed_url,source_url").eq("id", id).maybeSingle();
     if (v) {
       const p = await checkPlayable({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string });
-      if (p !== "restricted" && p !== "gone") break;
+      if (p !== "gone") break;
       await db().from("videos").update({ status: "skipped" }).eq("id", id);
       if (log) log.skipped++;
     }
@@ -263,10 +264,12 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     const { data: v } = await db().from("videos").select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count").eq("id", vid).single();
     if (v) {
       video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
-      if (viewer.kind === "host" && v.platform === "instagram") {
-        // Instagram tells us the video's shape; the fullscreen crop needs it (cached, so this is cheap after the first look).
+      if (viewer.kind === "host") {
+        // The host screen needs to know if this one can't play inline (shows the "open it on <site>" panel) and, for
+        // Instagram, the video's shape for the fullscreen crop. Cached per server instance, so cheap after the first look.
         const m = await checkMedia({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string }).catch(() => null);
         if (m?.aspect) video.aspect = m.aspect;
+        if (m?.playability === "restricted") video.restricted = true;
       }
       sender = v.submitted_by as string | null;
       if (s.state === "reveal") Object.assign(video, { avgRating: v.avg_rating, ratingCount: v.rating_count });

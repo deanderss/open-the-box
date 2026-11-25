@@ -63,7 +63,7 @@ export const POST = handle(async (req) => {
       });
       continue;
     }
-    if (playable === "restricted" || playable === "gone") {
+    if (playable === "gone") {
       results.push({ url: raw, status: "unplayable", message: playabilityMessage(playable, parsed.platform) });
       continue;
     }
@@ -82,7 +82,14 @@ export const POST = handle(async (req) => {
       results.push({ url: raw, status: error.code === "23505" ? "duplicate" : "invalid" });
     } else {
       room--;
-      results.push({ url: raw, status: "added" });
+      results.push({
+        url: raw,
+        status: "added",
+        message:
+          playable === "restricted"
+            ? `Added! Heads up: ${parsed.platform === "instagram" ? "Instagram" : parsed.platform === "youtube" ? "YouTube" : parsed.platform === "tiktok" ? "TikTok" : "Facebook"} only plays this one in its own app, so the host will open it there`
+            : undefined,
+      });
     }
   }
   return json({ results, added: results.filter((r) => r.status === "added").length });

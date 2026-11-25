@@ -40,6 +40,7 @@ export default function EmbedPlayer({
   platform,
   sourceUrl,
   aspect,
+  blocked = false,
   className = "",
   fullscreen = false,
   overlay,
@@ -51,6 +52,8 @@ export default function EmbedPlayer({
   sourceUrl?: string;
   /** video height / width when the server knows it (Instagram) */
   aspect?: number;
+  /** the site won't play this video inside other apps: show an "open it there" panel instead of a black frame */
+  blocked?: boolean;
   className?: string;
   fullscreen?: boolean;
   overlay?: ReactNode;
@@ -59,6 +62,8 @@ export default function EmbedPlayer({
   onReload?: () => void;
 }) {
   const site = SITE[platform] ?? "the site";
+  const [forced, setForced] = useState(false); // "try it here anyway"
+  const showBlocked = blocked && !forced;
   const frameKey = `${embedUrl}#${reloadKey}`;
 
   // Loading state: the embed is a cross-origin iframe, so all we can see is its `load` event. Show a spinner until
@@ -73,6 +78,7 @@ export default function EmbedPlayer({
     setLoaded(false);
     setSettled(false);
     setSlow(false);
+    if (showBlocked) return; // nothing is loading, so no slow/retry timers
     const slowT = setTimeout(() => setSlow(true), 10000);
     const retryT = setTimeout(() => {
       if (!loadedRef.current && reloadKey === 0) onReload?.();
@@ -82,7 +88,7 @@ export default function EmbedPlayer({
       clearTimeout(retryT);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameKey]);
+  }, [frameKey, showBlocked]);
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => setSettled(true), 1800);
@@ -92,7 +98,7 @@ export default function EmbedPlayer({
   const vp = useViewport(fullscreen);
   const layout = useMemo(() => layoutFor(platform, embedUrl, aspect), [platform, embedUrl, aspect]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
-  const immersive = fullscreen && placed;
+  const immersive = fullscreen && placed && !showBlocked;
 
   // lock page scroll / rubber-banding behind the stage
   useEffect(() => {
@@ -129,6 +135,27 @@ export default function EmbedPlayer({
               : { height: "min(72vh, 760px)", aspectRatio: "9 / 16", position: "relative" }
         }
       >
+        {showBlocked && (
+          <div
+            key="blocked"
+            className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 overflow-y-auto bg-night p-6 text-center text-white ${fullscreen ? "pt-24" : ""}`}
+          >
+            <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-5xl shadow-chunky">📲</div>
+            <h2 className="font-display text-2xl leading-tight sm:text-3xl">This one plays on {site}</h2>
+            <p className="max-w-xs text-sm text-white/70">
+              {site} only lets this video play in its own app. Open it there, play it for everyone, then come back for the answers.
+            </p>
+            {sourceUrl && (
+              <a className="btn btn-yellow" href={sourceUrl} target="_blank" rel="noreferrer">
+                Open on {site} ↗
+              </a>
+            )}
+            <button className="text-xs text-white/50 underline hover:text-white/80" onClick={() => setForced(true)}>
+              Try playing it here anyway
+            </button>
+          </div>
+        )}
+        {!showBlocked && (
         <iframe
           key={frameKey}
           src={embedUrl}
@@ -154,7 +181,8 @@ export default function EmbedPlayer({
           scrolling="no"
           referrerPolicy="strict-origin-when-cross-origin"
         />
-        {!settled && (
+        )}
+        {!showBlocked && !settled && (
           <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
             <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
@@ -189,7 +217,7 @@ export default function EmbedPlayer({
         </div>
       )}
 
-      {sourceUrl && !fullscreen && (
+      {sourceUrl && !fullscreen && !showBlocked && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/50 underline hover:text-white/80">
           Not loading? Open on {site} ↗
         </a>

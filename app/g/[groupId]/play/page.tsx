@@ -253,6 +253,7 @@ function HostInner({ groupId }: { groupId: string }) {
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
               aspect={state.video.aspect}
+              blocked={state.video.restricted}
               fullscreen={fullscreen}
               overlay={
                 <div className="text-white">

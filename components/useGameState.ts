@@ -9,7 +9,7 @@ export type GameState = {
   players: { id: string; name: string; color: string; answered: boolean }[];
   answered: number;
   eligible: number;
-  video: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; avgRating?: number | null; ratingCount?: number } | null;
+  video: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; restricted?: boolean; avgRating?: number | null; ratingCount?: number } | null;
   reveal: {
     senderId: string | null;
     senderName: string;
