@@ -187,6 +187,17 @@ export async function resumeSession(s: SessionRow) {
   return { session: (data as SessionRow) ?? (await getSession(s.id)) };
 }
 
+/**
+ * "Finished": wrap the game up on the current video. If it's still playing it is revealed first so its
+ * ratings and guesses count. Videos that haven't been shown stay `queued` in the box for the next game
+ * (only videos that were actually shown are marked played), and the normal finale/scoreboard appears.
+ */
+export async function finishSession(s: SessionRow) {
+  if (s.state === "lobby") return endSession(s);
+  if (s.state === "playing") await doReveal(s);
+  return endSession(s);
+}
+
 export async function endSession(s: SessionRow) {
   const { data } = await db()
     .from("sessions")
@@ -303,7 +314,12 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       .eq("group_id", s.group_id)
       .order("correct", { ascending: false })
       .limit(5);
-    finale = { topVideo, allTime: allTime || [] };
+    const { count: remaining } = await db()
+      .from("videos")
+      .select("*", { count: "exact", head: true })
+      .eq("group_id", s.group_id)
+      .eq("status", "queued");
+    finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0 };
   }
 
   const startedMs = s.video_started_at ? new Date(s.video_started_at).getTime() : null;

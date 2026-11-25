@@ -41,6 +41,7 @@ function HostInner({ groupId }: { groupId: string }) {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const [wantFull, setWantFull] = useState(true); // moderator can opt out of fullscreen for a video
+  const [finishPending, setFinishPending] = useState(false); // "Finished" clicked mid-video: reveal it, then wrap up
   useEffect(() => setOrigin(window.location.origin), []);
 
   const s = state?.session;
@@ -52,7 +53,10 @@ function HostInner({ groupId }: { groupId: string }) {
     if (!fullscreen) exitNativeFullscreen();
   }, [fullscreen, s?.state, s?.paused]);
   // Each new video starts fullscreen again
-  useEffect(() => setWantFull(true), [s?.index]);
+  useEffect(() => {
+    setWantFull(true);
+    setFinishPending(false);
+  }, [s?.index]);
 
   // Grand reveal: only when we actually watch the round flip from playing to reveal
   // (a page refresh mid-reveal just shows the results).
@@ -97,6 +101,17 @@ function HostInner({ groupId }: { groupId: string }) {
     setBusy(false);
   }
 
+  /** "Finished": wrap up on the current video. Unplayed videos stay in the box for the next game. */
+  async function finishGame() {
+    if (s?.state === "playing") {
+      // reveal this video first (with the normal big reveal), then the moderator wraps up
+      setFinishPending(true);
+      await act("reveal");
+      return;
+    }
+    if (confirm("Finish the game here? Everyone sees the scores as normal. Any videos you haven't played stay in the box for your next game.")) act("finish");
+  }
+
   if (!sessionId) return <Centered>Missing session. <Link href={`/g/${groupId}`} className="underline">Back</Link></Centered>;
   if (error && !state) return <Centered>{error}</Centered>;
   if (!state || !s) return <Centered>Opening the box…</Centered>;
@@ -136,15 +151,25 @@ function HostInner({ groupId }: { groupId: string }) {
               ⏸ Pause &amp; exit
             </button>
           )}
-          {s.state !== "finished" && (
+          {s.state === "lobby" && (
             <button
               className="btn btn-ghost btn-sm"
               disabled={busy}
               onClick={() => {
-                if (confirm("End the game for good? Unplayed videos stay in the box for next time, but you can't resume this game. (Use Pause & exit to come back later.)")) act("end");
+                if (confirm("Close this game? Nothing has been played yet, so all videos stay in the box.")) act("end");
               }}
             >
               End game
+            </button>
+          )}
+          {(s.state === "playing" || s.state === "reveal") && (
+            <button
+              className="btn btn-mint btn-sm"
+              disabled={busy}
+              title="Wrap up on this video. Scores are shown as normal and the rest of the videos stay in the box for next time."
+              onClick={finishGame}
+            >
+              {s.state === "playing" ? "✅ Finish after this video" : "✅ Finished"}
             </button>
           )}
         </div>
@@ -302,9 +327,22 @@ function HostInner({ groupId }: { groupId: string }) {
               <RevealPanel state={state} instant={grandFor === s.index} />
             )}
             {s.state === "reveal" && (
-              <button className="btn btn-yellow w-full text-2xl" disabled={busy} onClick={() => act("next")}>
-                {s.index + 1 >= s.total ? "🏁 Finish" : "Next video ▶"}
-              </button>
+              <div className="flex flex-col gap-2">
+                {finishPending && <p className="text-center text-sm text-white/70">Wrapping up after this video. Hit Finished when you&apos;re ready.</p>}
+                {s.index + 1 < s.total && (
+                  <button className={`btn w-full text-2xl ${finishPending ? "btn-ghost" : "btn-yellow"}`} disabled={busy} onClick={() => act("next")}>
+                    Next video ▶
+                  </button>
+                )}
+                <button
+                  className={`btn w-full ${finishPending || s.index + 1 >= s.total ? "btn-yellow text-2xl" : "btn-mint"}`}
+                  disabled={busy}
+                  title="Wrap up on this video. The remaining videos stay in the box for next time."
+                  onClick={finishGame}
+                >
+                  {s.index + 1 >= s.total ? "🏁 Finish" : "✅ Finished"}
+                </button>
+              </div>
             )}
             <MiniScores scores={state.scores} />
           </div>
@@ -464,6 +502,11 @@ function Finale({ state, groupId }: { state: NonNullable<ReturnType<typeof useGa
           </ol>
         </div>
       </div>
+      {(state.finale?.remaining ?? 0) > 0 && (
+        <p className="mx-auto mt-8 max-w-xl rounded-2xl bg-black/30 p-4 text-center text-lg">
+          📦 <b>{state.finale?.remaining}</b> video{state.finale?.remaining === 1 ? " is" : "s are"} still waiting in the box. Open it again any time to pick up where you left off.
+        </p>
+      )}
       <div className="mt-8 flex flex-wrap justify-center gap-4">
         <Link href={`/g/${groupId}/top`} className="btn btn-yellow">
           🏆 Top 100

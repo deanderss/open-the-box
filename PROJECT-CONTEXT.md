@@ -289,3 +289,9 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 - Not possible from outside the iframe: autoplay for Instagram/TikTok (the moderator taps play once per video), and detecting when the video ends.
 
 **Answer timer:** raised from 150s to 300s (5 minutes) by migration `20250101000500_five_minute_timer.sql`, so nobody feels rushed and longer videos fit. It's a DB setting (`app_settings.answer_window_seconds`); the countdown, timer bar and server auto-reveal all read it, and the game still reveals early once everyone has locked in.
+
+**"Finished" (wrap up a game, keep the rest of the box)** (`finishSession` in `lib/game.ts`, action `finish`)
+- Host header: **Finish after this video** while a video is playing (it triggers the normal reveal and the big sender reveal, then the moderator hits **Finished**), and **Finished** once revealed (also next to **Next video** on the results panel). The lobby keeps a plain **End game**; the old mid-video "End game" is gone because it threw away the unrevealed video.
+- Server: if the video is still `playing` it is revealed first (ratings and guesses count), then the session becomes `finished`. Only videos that were actually shown are marked `played` (in `showVideoAt`), so unplayed videos stay `queued` and are picked up by the box's next game (`beginSession` shuffles all `queued` videos). `current_index` is left on the current video, so the finale's "best video" only considers videos actually shown.
+- Stats show as normal: the host finale (top detective, best video, all-time leaderboard) now also says how many videos are still in the box (`finale.remaining`), and phones show their score plus a final scoreboard.
+- To continue later: open the box page and start a new game. Scores accumulate in the all-time leaderboard; the per-game "tonight" scores start fresh. (Use **Pause & exit** if you want to resume the same game mid-video instead.)

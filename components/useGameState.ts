@@ -20,6 +20,8 @@ export type GameState = {
   finale: {
     topVideo: { id: string; platform: string; embed_url: string; source_url: string; avg_rating: number; rating_count: number; senderName: string } | null;
     allTime: { player_id: string; display_name: string; avatar_color: string; correct: number; guesses: number }[];
+    /** videos still waiting in the box for the next game */
+    remaining: number;
   } | null;
   me: { playerId: string; name: string; color: string; answered: boolean; isMine: boolean; correct: boolean | null; score: number } | null;
   viewerValid: boolean;

@@ -289,9 +289,26 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
       )}
 
       {s.state === "finished" && (
-        <Panel emoji="🎬" title="That's a wrap!">
-          You got <b>{me?.score ?? 0}</b> correct guess{me?.score === 1 ? "" : "es"} tonight. See you next time!
-        </Panel>
+        <>
+          <Panel emoji="🎬" title="That's a wrap!">
+            You got <b>{me?.score ?? 0}</b> correct guess{me?.score === 1 ? "" : "es"} tonight. See you next time!
+          </Panel>
+          {state.scores.length > 0 && (
+            <div className="card mt-4">
+              <p className="title mb-2 text-lg text-mint">🕵️ Final scores</p>
+              <ol className="space-y-1">
+                {state.scores.slice(0, 8).map((sc, i) => (
+                  <li key={sc.playerId} className={`flex items-center justify-between rounded-xl px-2 py-1 ${sc.playerId === me?.playerId ? "bg-white/15" : ""}`}>
+                    <span className="flex items-center gap-2">
+                      <span className="w-5 text-white/50">{i + 1}</span> {sc.name}
+                    </span>
+                    <span className="font-display text-lg">{sc.correct}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </>
       )}
     </main>
   );
