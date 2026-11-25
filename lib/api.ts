@@ -1,4 +1,4 @@
-import { currentUserId, isGroupMod, isAdmin } from "./supabase-server";
+import { currentUserId, isGroupMod, isAdmin, isSuspended } from "./supabase-server";
 import { json } from "./util";
 
 export class HttpError extends Error {
@@ -10,6 +10,8 @@ export class HttpError extends Error {
 export async function requireUser() {
   const uid = await currentUserId();
   if (!uid) throw new HttpError(401, "Please log in");
+  // A suspended moderator's existing login stays valid for up to an hour, so check every time
+  if (await isSuspended(uid)) throw new HttpError(403, "This account has been suspended");
   return uid;
 }
 

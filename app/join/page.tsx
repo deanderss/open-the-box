@@ -1,10 +1,11 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import { useGameState, useCountdown } from "@/components/useGameState";
+import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
 
 type Seat = { playerId: string; token: string };
 const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
@@ -141,6 +142,25 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
     setErr(null);
   }, [s?.index]);
 
+  // Don't spoil the big screen: hold the result back while the grand reveal plays there.
+  // (Only when we watch the round flip to reveal. Joining or refreshing mid-reveal shows it right away.)
+  const prevState = useRef<string | null>(null);
+  const [revealReady, setRevealReady] = useState(true);
+  useEffect(() => {
+    const cur = s?.state ?? null;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    if (cur === "reveal" && prevState.current === "playing") {
+      setRevealReady(false);
+      t = setTimeout(() => setRevealReady(true), REVEAL_SUSPENSE_MS);
+    } else if (cur !== "reveal") {
+      setRevealReady(true);
+    }
+    prevState.current = cur;
+    return () => {
+      if (t) clearTimeout(t);
+    };
+  }, [s?.state]);
+
   useEffect(() => {
     if (state && !state.viewerValid && state.session.state !== "finished") onKicked();
   }, [state, onKicked]);
@@ -237,7 +257,13 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
         </div>
       ))}
 
-      {!s.paused && s.state === "reveal" && state.reveal && (
+      {!s.paused && s.state === "reveal" && state.reveal && !revealReady && (
+        <Panel emoji="🥁" title="And the sender is…">
+          Eyes on the big screen!
+        </Panel>
+      )}
+
+      {!s.paused && s.state === "reveal" && state.reveal && revealReady && (
         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="card mt-6 text-center">
           {me?.isMine ? (
             <>

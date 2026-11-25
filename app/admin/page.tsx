@@ -11,7 +11,7 @@ export default async function AdminPage() {
   if (!mod.is_admin) redirect("/groups");
   const db = supabaseAdmin();
   const [{ data: mods }, { data: settings }, { data: owned }, { data: reqs }] = await Promise.all([
-    db.from("moderators").select("id,display_name,email,is_admin,created_at").eq("approved", true).order("created_at"),
+    db.from("moderators").select("id,display_name,email,is_admin,suspended,created_at").eq("approved", true).order("created_at"),
     db.from("app_settings").select("max_moderators").eq("id", 1).single(),
     db.from("groups").select("owner_id"),
     db.from("moderator_requests").select("id,email,display_name,status,ip,user_agent,created_at,decided_at").order("created_at", { ascending: false }).limit(100),
@@ -27,7 +27,7 @@ export default async function AdminPage() {
         <AdminPanel
           meId={mod.id}
           cap={settings?.max_moderators ?? 10}
-          mods={(mods || []).map((m) => ({ id: m.id, name: m.display_name, email: m.email, isAdmin: m.is_admin, createdAt: m.created_at, boxes: counts.get(m.id) || 0 }))}
+          mods={(mods || []).map((m) => ({ id: m.id, name: m.display_name, email: m.email, isAdmin: m.is_admin, suspended: !!m.suspended, createdAt: m.created_at, boxes: counts.get(m.id) || 0 }))}
           requests={(reqs || []).map((r) => ({ id: r.id, name: r.display_name, email: r.email, status: r.status as "pending" | "approved" | "denied", ip: r.ip, userAgent: r.user_agent, createdAt: r.created_at, decidedAt: r.decided_at }))}
         />
       </main>

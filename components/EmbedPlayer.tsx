@@ -47,7 +47,7 @@ export default function EmbedPlayer({
       </div>
       {sourceUrl && !fullscreen && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/50 underline hover:text-white/80">
-          Not loading? Open on {platform === "tiktok" ? "TikTok" : platform === "instagram" ? "Instagram" : "Facebook"} ↗
+          Not loading? Open on {platform === "tiktok" ? "TikTok" : platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : "Facebook"} ↗
         </a>
       )}
     </div>

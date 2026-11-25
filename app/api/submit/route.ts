@@ -35,7 +35,7 @@ export const POST = handle(async (req) => {
 
   const text = Array.isArray(links) ? links.join("\n") : links || "";
   const urls = extractUrls(text).slice(0, 15);
-  if (!urls.length) throw new HttpError(400, "Paste at least one TikTok, Instagram or Facebook video link");
+  if (!urls.length) throw new HttpError(400, "Paste at least one TikTok, Instagram, Facebook or YouTube Shorts link");
 
   const { data: settings } = await db.from("app_settings").select("max_queued_videos_per_group").eq("id", 1).single();
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");

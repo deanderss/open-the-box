@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,6 +8,7 @@ import confetti from "canvas-confetti";
 import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import EmbedPlayer from "@/components/EmbedPlayer";
+import GrandReveal from "@/components/GrandReveal";
 import { useGameState, useCountdown } from "@/components/useGameState";
 
 /** Real browser fullscreen where supported (Android, desktop, iPad). Must be called from a click. */
@@ -52,6 +53,21 @@ function HostInner({ groupId }: { groupId: string }) {
   }, [fullscreen, s?.state, s?.paused]);
   // Each new video starts fullscreen again
   useEffect(() => setWantFull(true), [s?.index]);
+
+  // Grand reveal: only when we actually watch the round flip from playing to reveal
+  // (a page refresh mid-reveal just shows the results).
+  const prevState = useRef<string | null>(null);
+  const [grandFor, setGrandFor] = useState<number | null>(null);
+  const [grandOpen, setGrandOpen] = useState(false);
+  useEffect(() => {
+    const cur = s?.state ?? null;
+    if (s && cur === "reveal" && prevState.current === "playing") {
+      setGrandFor(s.index);
+      setGrandOpen(true);
+    }
+    prevState.current = cur;
+  }, [s?.state, s?.index]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeGrand = useCallback(() => setGrandOpen(false), []);
   // Leaving the page should never leave the browser stuck in fullscreen
   useEffect(() => () => exitNativeFullscreen(), []);
 
@@ -265,8 +281,12 @@ function HostInner({ groupId }: { groupId: string }) {
                   </button>
                 </div>
               </div>
+            ) : grandOpen && grandFor === s.index ? (
+              <div className="card py-10 text-center">
+                <p className="text-6xl">🥁</p>
+              </div>
             ) : (
-              <RevealPanel state={state} />
+              <RevealPanel state={state} instant={grandFor === s.index} />
             )}
             {s.state === "reveal" && (
               <button className="btn btn-yellow w-full text-2xl" disabled={busy} onClick={() => act("next")}>
@@ -279,14 +299,28 @@ function HostInner({ groupId }: { groupId: string }) {
       )}
 
       {s.state === "finished" && <Finale state={state} groupId={groupId} />}
+
+      {grandOpen && grandFor === s.index && s.state === "reveal" && state.reveal && (
+        <GrandReveal
+          players={state.roster}
+          sender={{ id: state.reveal.senderId, name: state.reveal.senderName, color: state.reveal.senderColor }}
+          rating={state.video?.avgRating != null ? Number(state.video.avgRating) : null}
+          onDone={closeGrand}
+        />
+      )}
     </main>
   );
 }
 
-function RevealPanel({ state }: { state: NonNullable<ReturnType<typeof useGameState>["state"]> }) {
-  const [shown, setShown] = useState(false);
+function RevealPanel({ state, instant = false }: { state: NonNullable<ReturnType<typeof useGameState>["state"]>; instant?: boolean }) {
+  const [shown, setShown] = useState(instant);
   const r = state.reveal!;
   useEffect(() => {
+    if (instant) {
+      // the grand reveal already did the drumroll: go straight to the results
+      setShown(true);
+      return;
+    }
     setShown(false);
     const t = setTimeout(() => {
       setShown(true);
@@ -313,8 +347,14 @@ function RevealPanel({ state }: { state: NonNullable<ReturnType<typeof useGameSt
               </div>
             </div>
             <ul className="mt-4 max-h-56 space-y-1 overflow-y-auto">
-              {r.guesses.map((g) => (
-                <li key={g.playerId} className={`flex items-center justify-between rounded-xl px-3 py-1.5 ${g.correct ? "bg-mint/25" : "bg-black/25"}`}>
+              {r.guesses.map((g, i) => (
+                <motion.li
+                  key={g.playerId}
+                  initial={instant ? { opacity: 0, x: 40 } : false}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: instant ? 0.9 + i * 0.28 : 0, type: "spring", bounce: 0.35 }}
+                  className={`flex items-center justify-between rounded-xl px-3 py-1.5 ${g.correct ? "bg-mint/25" : "bg-black/25"}`}
+                >
                   <span className="flex items-center gap-2">
                     <Avatar name={g.name} color={g.color} size={28} />
                     <span className="font-semibold">{g.name}</span>
@@ -323,7 +363,7 @@ function RevealPanel({ state }: { state: NonNullable<ReturnType<typeof useGameSt
                   <span className="font-display">
                     {g.correct ? "✅ +1" : "❌"} <span className="ml-2 text-white/60">{g.rating}★</span>
                   </span>
-                </li>
+                </motion.li>
               ))}
               {r.guesses.length === 0 && <li className="text-center text-white/50">No guesses this time!</li>}
             </ul>

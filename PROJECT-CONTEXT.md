@@ -151,7 +151,7 @@ End game at any time: finished (unplayed videos stay queued)
   | Instagram `/reel`, `/reels`, `/p` or `/tv/<code>` | `https://www.instagram.com/<kind>/<code>/embed/` |
   | Facebook `/reel/<id>`, `/watch?v=`, `/<page>/videos/<id>`, `/share/r/`, `/share/v/`, `fb.watch` | `https://www.facebook.com/plugins/video.php?href=<encoded>&show_text=false&autoplay=true` |
 
-- YouTube and other sites are rejected as `invalid`. Adding YouTube would mean a new parser branch plus a `'youtube'` value in the `videos.platform` check constraint (a new migration).
+- **YouTube Shorts** (`youtube.com/shorts/<11-char id>`, any `www`/`m` host, query strings ignored) embed as `https://www.youtube.com/embed/<id>?autoplay=1&playsinline=1&rel=0&modestbranding=1&loop=1&playlist=<id>`. Regular YouTube watch links and `youtu.be` links are rejected on purpose. Other sites are rejected as `invalid`.
 - `components/EmbedPlayer.tsx` shows a 9:16 iframe with `allow="autoplay; encrypted-media; …"`, plus an "Open on <platform>" fallback link.
 
 ---
@@ -246,6 +246,7 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 | `20250101000100_grants_and_admin_lock.sql` | **Fixes "permission denied for table groups".** Tables created through the Management API had no data privileges for `service_role`, so every server write failed. Grants full access to `service_role`, SELECT-only to `authenticated` (RLS still limits rows), nothing to `anon`, plus default privileges for future tables. Also locks admin to `dane.andersson.da@gmail.com` (trigger plus `moderators_admin_email_lock` check constraint). |
 | `20250101000200_moderator_approval.sql` | `moderator_requests` table (server-only), `moderators.approved`, and `handle_new_user` now creates unapproved profiles except for the admin. |
 | `20250101000300_pause_and_limits.sql` | `sessions.paused_at`; defaults and live values changed to **10 boxes per moderator** and **50 moderators**. |
+| `20250101000400_youtube_and_suspend.sql` | Allows `'youtube'` in the `videos.platform` check; adds `moderators.suspended`. |
 
 **Moderator approval flow**
 - `POST /api/auth/signup` creates the auth user **blocked** (`ban_duration` ~100 years), inserts a `moderator_requests` row (name, email, IP, user agent) and emails the admin via `lib/notify.ts` (Resend; skipped with a log line if `RESEND_API_KEY` is unset).
@@ -268,3 +269,15 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 **Caching fix:** `lib/supabase-server.ts` passes `cache: "no-store"` to every server-side fetch. Without it, Next.js cached Supabase reads (stale seat counts and game state).
 
 **Deploy notes:** `deploy.sh` now accepts `SB_REF` (skips the org lookup), reads `VERCEL_TOKEN` from the environment, and works with the current Vercel CLI. Secrets live only in the git-ignored `.env.local` and in Vercel; revoke deploy tokens after use. Redeploy with `npx vercel deploy --prod --scope open-the-box`.
+
+**YouTube Shorts:** parser branch in `lib/embeds.ts`, `'youtube'` allowed by migration 4, labels in the submit page, `TopList.tsx` and `EmbedPlayer.tsx`.
+
+**Admin moderator management**
+- `/admin` rows link to `/admin/moderators/[id]`: the moderator's boxes (owned and co-moderated), who is in each (moderators plus the active player roster), queued/played counts and any live game. It shows statuses and counts only, never which player sent which video.
+- Admin actions: delete any box (`DELETE /api/admin/groups?id=`), suspend or reactivate an account (`POST /api/admin/moderators`, which also sets the Supabase ban and `moderators.suspended`), delete an account keeping boxes (handed to a co-moderator or the admin) or deleting their boxes too (`DELETE /api/admin/moderators?id=&boxes=delete`). The admin account itself can't be suspended or deleted.
+- Suspension takes effect immediately: `requireUser()` checks `moderators.suspended` on every API call and `getMe()` redirects suspended users to `/suspended`. The ban only blocks new logins.
+
+**Grand reveal** (`components/GrandReveal.tsx`, `lib/sfx.ts`)
+- When the host screen sees a round flip from `playing` to `reveal`, a full-screen sequence plays: "Everyone's locked in" with a drum roll, a slot-reel of roster names that slows and lands on the sender, a flash, fanfare and confetti, then the sender and average rating. Then the results panel appears and each guess slides in.
+- Sounds are synthesized with WebAudio (no files). There is a mute toggle (`otb-muted` in localStorage) and a Skip button. Refreshing mid-reveal skips straight to the results.
+- Phones hold back their result screen for `REVEAL_SUSPENSE_MS` (about 5.7s) so they don't spoil the big screen. Sync is approximate because each device polls on its own 2-second cycle.

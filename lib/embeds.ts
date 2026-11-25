@@ -1,4 +1,4 @@
-export type Platform = "tiktok" | "instagram" | "facebook";
+export type Platform = "tiktok" | "instagram" | "facebook" | "youtube";
 export interface ParsedVideo {
   platform: Platform;
   sourceUrl: string; // canonical
@@ -81,6 +81,19 @@ export function parseVideoUrl(raw: string): ParsedVideo | null {
       platform: "instagram",
       sourceUrl: `https://www.instagram.com/${kind}/${code}/`,
       embedUrl: `https://www.instagram.com/${kind}/${code}/embed/`,
+    };
+  }
+
+  // YouTube Shorts: youtube.com/shorts/ID (the link the Share button gives you).
+  // Regular watch links are not accepted: this is a Shorts game.
+  if (h === "youtube.com" || h === "music.youtube.com") {
+    const m = path.match(/^\/shorts\/([A-Za-z0-9_-]{11})(?:[/?#]|$)/);
+    if (!m) return null;
+    const id = m[1];
+    return {
+      platform: "youtube",
+      sourceUrl: `https://www.youtube.com/shorts/${id}`,
+      embedUrl: `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0&modestbranding=1&loop=1&playlist=${id}`,
     };
   }
 

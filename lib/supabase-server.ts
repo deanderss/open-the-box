@@ -56,6 +56,11 @@ export async function isGroupMod(userId: string, groupId: string) {
   return data?.role as "owner" | "co" | undefined;
 }
 
+export async function isSuspended(userId: string) {
+  const { data } = await supabaseAdmin().from("moderators").select("suspended").eq("id", userId).maybeSingle();
+  return !!data?.suspended;
+}
+
 export async function isAdmin(userId: string) {
   const { data } = await supabaseAdmin().from("moderators").select("is_admin").eq("id", userId).maybeSingle();
   return !!data?.is_admin;

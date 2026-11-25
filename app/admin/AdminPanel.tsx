@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-type M = { id: string; name: string; email: string; isAdmin: boolean; createdAt: string; boxes: number };
+type M = { id: string; name: string; email: string; isAdmin: boolean; suspended: boolean; createdAt: string; boxes: number };
 type Req = { id: string; name: string; email: string; status: "pending" | "approved" | "denied"; ip: string | null; userAgent: string | null; createdAt: string; decidedAt: string | null };
 
 const fmt = (d: string) => new Date(d).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
@@ -92,30 +93,22 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
       </div>
 
       <h2 className="title mt-8 text-2xl">Moderators</h2>
+      <p className="text-sm text-white/60">Click a moderator to see their boxes and who&apos;s in them, or to suspend or remove them.</p>
       <ul className="mt-3 space-y-3">
         {mods.map((m) => (
-          <li key={m.id} className="card flex items-center justify-between p-4">
-            <div>
-              <p className="font-display text-lg">
-                {m.name} {m.isAdmin && <span className="ml-1 rounded-full bg-sunny px-2 py-0.5 text-xs text-night">admin</span>}
-              </p>
-              <p className="text-sm text-white/60">
-                {m.email} · owns {m.boxes} box{m.boxes === 1 ? "" : "es"} · joined {new Date(m.createdAt).toLocaleDateString()}
-              </p>
-            </div>
-            {m.id !== meId && (
-              <button
-                className="btn btn-danger btn-sm"
-                onClick={async () => {
-                  if (!confirm(`Remove ${m.name}? Boxes they own will be handed to a co-moderator (or you).`)) return;
-                  const res = await fetch(`/api/admin/moderators?id=${m.id}`, { method: "DELETE" });
-                  if (!res.ok) alert((await res.json()).error);
-                  router.refresh();
-                }}
-              >
-                Remove
-              </button>
-            )}
+          <li key={m.id}>
+            <Link href={`/admin/moderators/${m.id}`} className="card flex items-center justify-between gap-3 p-4 transition hover:-translate-y-0.5">
+              <div className="min-w-0">
+                <p className="font-display text-lg">
+                  {m.name} {m.isAdmin && <span className="ml-1 rounded-full bg-sunny px-2 py-0.5 text-xs text-night">admin</span>}
+                  {m.suspended && <span className="ml-1 rounded-full bg-[#FF5E5E] px-2 py-0.5 text-xs text-white">suspended</span>}
+                </p>
+                <p className="break-all text-sm text-white/60">
+                  {m.email} · owns {m.boxes} box{m.boxes === 1 ? "" : "es"} · joined {new Date(m.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+              <span className="shrink-0 font-display text-sunny">{m.id === meId ? "View →" : "Manage →"}</span>
+            </Link>
           </li>
         ))}
       </ul>

@@ -12,7 +12,7 @@ type Verdict = "rock" | "meh" | "stink";
 const STATUS: Record<Result["status"], { icon: string; text: string }> = {
   added: { icon: "✅", text: "In the box" },
   duplicate: { icon: "🙃", text: "Someone beat you to it, already in the box" },
-  invalid: { icon: "❌", text: "Not a TikTok, Instagram or Facebook video" },
+  invalid: { icon: "❌", text: "Not a TikTok, Instagram, Facebook or YouTube Shorts video" },
   full: { icon: "📦", text: "Box is stuffed full" },
 };
 
@@ -63,6 +63,7 @@ function platformOf(u: string) {
   if (/tiktok\.com/i.test(u)) return "🎵";
   if (/instagram\.com|instagr\.am/i.test(u)) return "📸";
   if (/facebook\.com|fb\.watch|fb\.com/i.test(u)) return "📘";
+  if (/youtube\.com\/shorts/i.test(u)) return "▶️";
   return u.trim() ? "❓" : "🔗";
 }
 
@@ -239,7 +240,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
             </motion.div>
 
             <div className="card space-y-3 p-4">
-              <label className="label">Feed the box 🍽 (Reels, TikToks, Facebook videos)</label>
+              <label className="label">Feed the box 🍽 (Reels, TikToks, Shorts, Facebook videos)</label>
               <AnimatePresence initial={false}>
                 {links.map((l, i) => (
                   <motion.div key={i} initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="flex items-center gap-2">
