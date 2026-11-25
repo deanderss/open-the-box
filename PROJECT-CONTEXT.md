@@ -31,7 +31,7 @@ The tone is playful and cartoony: chunky buttons, confetti, a box mascot with a 
 | Team members | **Never log in.** Submission uses a secret per-box **share link** (`/s/<token>`). Playing uses a **4-letter room code**, then picking your name from the roster. |
 | Submission | The mobile form accepts **several links at once** (up to 15). |
 | Scoring | A running **leaderboard per box** of correct guesses (1 point each), all-time plus last session. |
-| Reveal | The sender is **revealed after each video**, when everyone has locked in **or** after **150 seconds** (server-enforced). The moderator can also click **Reveal now**. |
+| Reveal | The sender is **revealed after each video**, when everyone has locked in **or** after **5 minutes / 300 seconds** (server-enforced). The moderator can also click **Reveal now**. |
 | Submission form tone | A "⚠️ **These better be good…**" sticky note. After submitting, a fake "AI is watching your videos…" scan, then a **random** verdict: "The AI watched these videos… **and they ROCK!!!**", "…they're fine", or "…they STINK". Weights are 40% rock, 30% meh and 30% stink. The verdict is intentionally random and does not judge real quality. |
 
 ---
@@ -93,7 +93,7 @@ The tone is playful and cartoony: chunky buttons, confetti, a box mascot with a 
   - `max_groups_per_moderator` (10)
   - `max_players_per_group` (30)
   - `max_queued_videos_per_group` (300)
-  - `answer_window_seconds` (150)
+  - `answer_window_seconds` (300)
 - `moderators`: `id` (references auth.users), `display_name`, `email`, `is_admin`
 - `groups`: `name`, `color`, `emoji`, `owner_id`, `submit_token` (unique, generated in app code with `crypto.randomBytes(18).toString('base64url')`)
 - `group_moderators`: `group_id`, `moderator_id`, `role` (`owner` or `co`)
@@ -117,7 +117,7 @@ The tone is playful and cartoony: chunky buttons, confetti, a box mascot with a 
 ## 6. Game engine (`lib/game.ts`): the state machine
 
 ```
-lobby --begin--> playing(index 0) --(all answered | 150s | Reveal now)--> reveal --Next--> playing(index+1) ... --> finished
+lobby --begin--> playing(index 0) --(all answered | 300s | Reveal now)--> reveal --Next--> playing(index+1) ... --> finished
                      |                                                        |
                      +--Skip (status = skipped, responses deleted)-------------+--> next index
 End game at any time: finished (unplayed videos stay queued)
@@ -223,7 +223,7 @@ End game at any time: finished (unplayed videos stay queued)
   - Client pages are `"use client"`. Server pages use `getMe()` from `lib/me.ts`.
   - Wrap new API routes in `handle()` and use `requireGroupMod()`, `requireUser()` or `requireAdmin()`.
 - Common change recipes:
-  - **Answer timer**: `update app_settings set answer_window_seconds = 120;` (no code change).
+  - **Answer timer**: `update app_settings set answer_window_seconds = 300;` (no code change).
   - **Moderator cap**: through the `/admin` page, or `update app_settings set max_moderators = N;`.
   - **Submission verdict text or odds**: `VERDICTS`, `TAUNTS` and `rollVerdict()` in `app/s/[token]/page.tsx`.
   - **Scoring rules**: `is_correct` is set in `app/api/session/answer/route.ts`; session scores are in `buildState`; all-time scores come from the `group_leaderboard` view.
@@ -264,7 +264,7 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 **Fullscreen video (host screen)**
 - While a video is `playing`, `EmbedPlayer` runs as a full-viewport CSS overlay (works on iPhone) and `play/page.tsx` also requests real browser fullscreen from the Start/Next/Resume click (Android, desktop and iPad only; browsers require a user gesture).
 - It returns to the window view at the reveal, on pause, or via the **Exit** button. A **Full screen** button re-enters it.
-- **Limitation:** the video plays inside TikTok/Instagram/Facebook iframes, which don't report when playback ends. "Video ended" is therefore the reveal (everyone locked in, 150 seconds, or **Reveal now**).
+- **Limitation:** the video plays inside TikTok/Instagram/Facebook iframes, which don't report when playback ends. "Video ended" is therefore the reveal (everyone locked in, 5 minutes, or **Reveal now**).
 
 **Caching fix:** `lib/supabase-server.ts` passes `cache: "no-store"` to every server-side fetch. Without it, Next.js cached Supabase reads (stale seat counts and game state).
 
@@ -287,3 +287,5 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 - Host controls float over the top as a translucent gradient with a story-style timer bar, honoring `safe-area-inset-top` (`viewport-fit=cover`). Each new video remounts the player (`key=embedUrl`) and slides up (`@keyframes otb-reel-in`). Body scroll is locked while full screen. Same iframe in window and full screen mode, so toggling doesn't restart the video.
 - If Instagram/TikTok change their embed layout, update the numbers in `layoutFor()`.
 - Not possible from outside the iframe: autoplay for Instagram/TikTok (the moderator taps play once per video), and detecting when the video ends.
+
+**Answer timer:** raised from 150s to 300s (5 minutes) by migration `20250101000500_five_minute_timer.sql`, so nobody feels rushed and longer videos fit. It's a DB setting (`app_settings.answer_window_seconds`); the countdown, timer bar and server auto-reveal all read it, and the game still reveals early once everyone has locked in.
