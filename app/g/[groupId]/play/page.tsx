@@ -213,32 +213,45 @@ function HostInner({ groupId }: { groupId: string }) {
         <section className="grid flex-1 gap-6 px-6 pb-8 lg:grid-cols-[1fr_minmax(340px,420px)]">
           <div className="flex flex-col items-center justify-start gap-2">
             <EmbedPlayer
+              key={state.video.embedUrl}
               embedUrl={state.video.embedUrl}
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
               fullscreen={fullscreen}
               overlay={
-                <div className="flex items-center justify-between gap-2 bg-black/80 px-3 py-2 text-white">
-                  <div className="flex items-center gap-3">
-                    <Countdown ms={remaining} total={s.windowSeconds} size={44} />
-                    <span className="font-display text-lg">
-                      <span className="text-mint">{state.answered}</span>
-                      <span className="text-white/60"> / {state.eligible} locked in</span>
-                    </span>
+                <div className="text-white">
+                  {/* story-style timer bar */}
+                  <div className="mx-2 mt-2 h-1 overflow-hidden rounded-full bg-white/25">
+                    <div
+                      className="h-full rounded-full transition-[width] duration-300 ease-linear"
+                      style={{
+                        width: `${s.windowSeconds > 0 ? Math.max(0, Math.min(100, (remaining / (s.windowSeconds * 1000)) * 100)) : 0}%`,
+                        background: remaining <= 15000 ? "#FF5E5E" : remaining <= 45000 ? "#FFD23F" : "#3DDC97",
+                      }}
+                    />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button className="btn btn-pink btn-sm" disabled={busy} onClick={() => act("reveal")}>
-                      Reveal now
-                    </button>
-                    <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
-                      Skip ⏭
-                    </button>
-                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={async () => { await act("pause"); router.push(`/g/${groupId}`); }}>
-                      ⏸
-                    </button>
-                    <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
-                      ⤡ Exit
-                    </button>
+                  <div className="flex items-center justify-between gap-2 px-3 pt-2">
+                    <div className="flex items-center gap-3 drop-shadow">
+                      <Countdown ms={remaining} total={s.windowSeconds} size={40} />
+                      <span className="font-display text-base">
+                        <span className="text-mint">{state.answered}</span>
+                        <span className="text-white/70"> / {state.eligible} locked in</span>
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button className="btn btn-pink btn-sm" disabled={busy} onClick={() => act("reveal")}>
+                        Reveal now
+                      </button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+                        Skip ⏭
+                      </button>
+                      <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={async () => { await act("pause"); router.push(`/g/${groupId}`); }}>
+                        ⏸
+                      </button>
+                      <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
+                        ⤡ Exit
+                      </button>
+                    </div>
                   </div>
                 </div>
               }

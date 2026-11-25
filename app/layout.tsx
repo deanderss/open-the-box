@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: "Open the Box 📦",
   description: "Team video party game — send in videos, rate them, guess who sent them.",
 };
-export const viewport: Viewport = { width: "device-width", initialScale: 1, maximumScale: 1, themeColor: "#1B0F3B" };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, maximumScale: 1, viewportFit: "cover", themeColor: "#1B0F3B" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
