@@ -175,13 +175,19 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
         <span className="rounded-full bg-black/30 px-3 py-1 font-display">🕵️ {me?.score ?? 0}</span>
       </header>
 
-      {s.state === "lobby" && (
+      {s.paused && s.state !== "finished" && (
+        <Panel emoji="⏸" title="Game paused">
+          The host paused the game. Keep this page open. It'll pick up right where it left off.
+        </Panel>
+      )}
+
+      {!s.paused && s.state === "lobby" && (
         <Panel emoji="🎉" title="You're in!">
           Watch the big screen. The show starts soon.
         </Panel>
       )}
 
-      {s.state === "playing" && me && (me.answered ? (
+      {!s.paused && s.state === "playing" && me && (me.answered ? (
         <Panel emoji="🔒" title="Locked in!">
           Waiting for everyone else… ({state.answered}/{state.eligible})
         </Panel>
@@ -231,7 +237,7 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
         </div>
       ))}
 
-      {s.state === "reveal" && state.reveal && (
+      {!s.paused && s.state === "reveal" && state.reveal && (
         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="card mt-6 text-center">
           {me?.isMine ? (
             <>

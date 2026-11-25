@@ -16,12 +16,17 @@ export default async function GroupLobby({ params }: { params: { groupId: string
   const { data: group } = await sb.from("groups").select("id,name,color,emoji,owner_id,submit_token").eq("id", params.groupId).maybeSingle();
   if (!group) notFound();
 
-  const [{ data: players }, { count: queued }, { count: played }, { data: gm }] = await Promise.all([
+  const [{ data: players }, { count: queued }, { count: played }, { data: gm }, { data: active }] = await Promise.all([
     sb.from("players").select("id,display_name,avatar_color").eq("group_id", group.id).eq("active", true).order("display_name"),
     sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "queued"),
     sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "played"),
     sb.from("group_moderators").select("moderator_id,role").eq("group_id", group.id),
+    // An unfinished game (paused or just left open) that can be resumed
+    sb.from("sessions").select("id,state,current_index,video_order,paused_at").eq("group_id", group.id).is("ended_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
+  const inProgress = active && (active.state === "playing" || active.state === "reveal")
+    ? { sessionId: active.id as string, paused: !!active.paused_at, videoNumber: (active.current_index as number) + 1, total: (active.video_order as string[]).length }
+    : null;
   const modIds = (gm || []).map((m) => m.moderator_id);
   const { data: modProfiles } = modIds.length ? await supabaseAdmin().from("moderators").select("id,display_name,email").in("id", modIds) : { data: [] };
   const mods = (gm || []).map((m) => ({ ...m, ...(modProfiles || []).find((p) => p.id === m.moderator_id) }));
@@ -48,7 +53,7 @@ export default async function GroupLobby({ params }: { params: { groupId: string
 
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="card flex flex-col items-center justify-center lg:col-span-2">
-            <OpenBoxButton groupId={group.id} count={queued ?? 0} />
+            <OpenBoxButton groupId={group.id} count={queued ?? 0} inProgress={inProgress} />
           </div>
           <div className="flex flex-col gap-4">
             <Link href={`/g/${group.id}/top`} className="card flex items-center gap-4 transition hover:-translate-y-1">

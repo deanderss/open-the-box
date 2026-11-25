@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 export type GameState = {
-  session: { id: string; code: string; state: "lobby" | "playing" | "reveal" | "finished"; index: number; total: number; windowSeconds: number; remainingMs: number; serverNow: number };
+  session: { id: string; code: string; state: "lobby" | "playing" | "reveal" | "finished"; paused: boolean; index: number; total: number; windowSeconds: number; remainingMs: number; serverNow: number };
   group: { id: string; name: string; color: string; emoji: string } | null;
   roster: { id: string; name: string; color: string }[];
   players: { id: string; name: string; color: string; answered: boolean }[];

@@ -7,19 +7,17 @@ export const POST = handle(async (req) => {
   if (!groupId) throw new HttpError(400, "Missing box");
   const { uid } = await requireGroupMod(groupId);
   const db = supabaseAdmin();
-  // Re-use an active (unfinished) session for this box, if one exists
+  // Re-use the box's unfinished session (however old) so a paused game can be resumed later.
+  // It only goes away when the moderator ends the game.
   const { data: existing } = await db
     .from("sessions")
-    .select("id,room_code,created_at")
+    .select("id,room_code")
     .eq("group_id", groupId)
     .is("ended_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (existing && Date.now() - new Date(existing.created_at).getTime() < 6 * 3600 * 1000) {
-    return json({ sessionId: existing.id, code: existing.room_code });
-  }
-  if (existing) await db.from("sessions").update({ state: "finished", ended_at: new Date().toISOString() }).eq("id", existing.id);
+  if (existing) return json({ sessionId: existing.id, code: existing.room_code });
   for (let i = 0; i < 8; i++) {
     const code = roomCode();
     const { data, error } = await db.from("sessions").insert({ group_id: groupId, room_code: code, created_by: uid }).select("id").single();

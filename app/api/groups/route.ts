@@ -10,7 +10,8 @@ export const POST = handle(async (req) => {
   const db = supabaseAdmin();
   const { data: settings } = await db.from("app_settings").select("*").eq("id", 1).single();
   const { count } = await db.from("groups").select("*", { count: "exact", head: true }).eq("owner_id", uid);
-  if ((count ?? 0) >= (settings?.max_groups_per_moderator ?? 5)) throw new HttpError(403, `You can own up to ${settings?.max_groups_per_moderator ?? 5} boxes`);
+  const maxBoxes = settings?.max_groups_per_moderator ?? 10;
+  if ((count ?? 0) >= maxBoxes) throw new HttpError(403, `You can own up to ${maxBoxes} boxes`);
   const { data: g, error } = await db
     .from("groups")
     .insert({ name: n, color: color || "#FF4FA3", emoji: (emoji || "📦").slice(0, 8), owner_id: uid, submit_token: randomToken() })

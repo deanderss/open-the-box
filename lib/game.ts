@@ -12,6 +12,7 @@ export type SessionRow = {
   reveal_at: string | null;
   created_at: string;
   ended_at: string | null;
+  paused_at: string | null;
 };
 
 const db = () => supabaseAdmin();
@@ -103,7 +104,7 @@ export async function doReveal(s: SessionRow) {
 
 /** Auto-reveal when everyone answered or the timer ran out (server-authoritative). */
 export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Promise<SessionRow> {
-  if (s.state !== "playing" || !s.video_started_at) return s;
+  if (s.state !== "playing" || !s.video_started_at || s.paused_at) return s;
   const win = windowSeconds ?? (await getWindowSeconds());
   const elapsed = (Date.now() - new Date(s.video_started_at).getTime()) / 1000;
   if (elapsed >= win) return doReveal(s);
@@ -156,6 +157,34 @@ export async function skipVideo(s: SessionRow) {
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
   return { session: await showVideoAt(s, s.current_index + 1) };
+}
+
+/** Freeze the game so the moderator can leave and come back later. */
+export async function pauseSession(s: SessionRow) {
+  if (s.ended_at || s.state === "finished") return { error: "This game has already ended" };
+  if (s.paused_at) return { session: s };
+  const { data } = await db()
+    .from("sessions")
+    .update({ paused_at: new Date().toISOString() })
+    .eq("id", s.id)
+    .is("paused_at", null)
+    .select("*")
+    .maybeSingle();
+  await broadcast(s.id);
+  return { session: (data as SessionRow) ?? (await getSession(s.id)) };
+}
+
+/** Unfreeze: push the video start time forward so the answer timer continues where it stopped. */
+export async function resumeSession(s: SessionRow) {
+  if (!s.paused_at) return { session: s };
+  const pausedMs = Date.now() - new Date(s.paused_at).getTime();
+  const patch: { paused_at: null; video_started_at?: string } = { paused_at: null };
+  if (s.state === "playing" && s.video_started_at) {
+    patch.video_started_at = new Date(new Date(s.video_started_at).getTime() + pausedMs).toISOString();
+  }
+  const { data } = await db().from("sessions").update(patch).eq("id", s.id).eq("paused_at", s.paused_at).select("*").maybeSingle();
+  await broadcast(s.id);
+  return { session: (data as SessionRow) ?? (await getSession(s.id)) };
 }
 
 export async function endSession(s: SessionRow) {
@@ -278,13 +307,15 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   }
 
   const startedMs = s.video_started_at ? new Date(s.video_started_at).getTime() : null;
-  const remainingMs = s.state === "playing" && startedMs ? Math.max(0, startedMs + windowSeconds * 1000 - Date.now()) : 0;
+  const clockNow = s.paused_at ? new Date(s.paused_at).getTime() : Date.now(); // timer is frozen while paused
+  const remainingMs = s.state === "playing" && startedMs ? Math.max(0, startedMs + windowSeconds * 1000 - clockNow) : 0;
 
   return {
     session: {
       id: s.id,
       code: s.room_code,
       state: s.state,
+      paused: !!s.paused_at && s.state !== "finished",
       index: s.current_index,
       total: s.video_order.length,
       windowSeconds,

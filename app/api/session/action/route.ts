@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
 import { json } from "@/lib/util";
-import { getSession, beginSession, doReveal, nextVideo, skipVideo, endSession, broadcast } from "@/lib/game";
+import { getSession, beginSession, doReveal, nextVideo, skipVideo, endSession, pauseSession, resumeSession, broadcast } from "@/lib/game";
 
 export const POST = handle(async (req) => {
   const { sessionId, action, playerId } = await body<{ sessionId?: string; action?: string; playerId?: string }>(req);
@@ -9,6 +9,8 @@ export const POST = handle(async (req) => {
   if (!s) throw new HttpError(404, "Session not found");
   await requireGroupMod(s.group_id);
   if (s.ended_at && action !== "end") throw new HttpError(400, "This session has ended");
+  // While paused, only resume / end / pause / kick make sense
+  if (s.paused_at && !["resume", "end", "pause", "kick"].includes(action || "")) throw new HttpError(409, "The game is paused. Resume it first.");
   let r: { error?: string; session?: unknown } = {};
   switch (action) {
     case "begin":
@@ -22,6 +24,12 @@ export const POST = handle(async (req) => {
       break;
     case "skip":
       r = await skipVideo(s);
+      break;
+    case "pause":
+      r = await pauseSession(s);
+      break;
+    case "resume":
+      r = await resumeSession(s);
       break;
     case "end":
       r = await endSession(s);

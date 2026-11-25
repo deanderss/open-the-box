@@ -1,6 +1,6 @@
 "use client";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRCodeSVG } from "qrcode.react";
@@ -10,16 +10,50 @@ import Countdown from "@/components/Countdown";
 import EmbedPlayer from "@/components/EmbedPlayer";
 import { useGameState, useCountdown } from "@/components/useGameState";
 
+/** Real browser fullscreen where supported (Android, desktop, iPad). Must be called from a click. */
+function enterNativeFullscreen() {
+  const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+  try {
+    if (document.fullscreenElement) return;
+    const p = el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen?.();
+    (p as Promise<void> | undefined)?.catch?.(() => {});
+  } catch {
+    /* iPhone Safari has no element fullscreen; the CSS overlay still fills the screen */
+  }
+}
+function exitNativeFullscreen() {
+  const d = document as Document & { webkitExitFullscreen?: () => Promise<void> | void };
+  try {
+    if (!document.fullscreenElement) return;
+    const p = document.exitFullscreen ? document.exitFullscreen() : d.webkitExitFullscreen?.();
+    (p as Promise<void> | undefined)?.catch?.(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
 function HostInner({ groupId }: { groupId: string }) {
+  const router = useRouter();
   const sessionId = useSearchParams().get("session");
   const { state, error, refresh, fetchedAt } = useGameState({ sessionId }, 2000);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
+  const [wantFull, setWantFull] = useState(true); // moderator can opt out of fullscreen for a video
   useEffect(() => setOrigin(window.location.origin), []);
 
   const s = state?.session;
-  const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing");
+  const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing" && !s?.paused);
+
+  // Fullscreen while a video is playing; back to the window view at the reveal (or when paused).
+  const fullscreen = !!(s && s.state === "playing" && !s.paused && state?.video && wantFull);
+  useEffect(() => {
+    if (!fullscreen) exitNativeFullscreen();
+  }, [fullscreen, s?.state, s?.paused]);
+  // Each new video starts fullscreen again
+  useEffect(() => setWantFull(true), [s?.index]);
+  // Leaving the page should never leave the browser stuck in fullscreen
+  useEffect(() => () => exitNativeFullscreen(), []);
 
   // When the local countdown hits 0, poke the server (it re-checks the time itself)
   const pokedFor = useRef<number>(-1);
@@ -31,6 +65,9 @@ function HostInner({ groupId }: { groupId: string }) {
   }, [remaining, s?.state, s?.index, refresh]);
 
   async function act(action: string, extra: Record<string, string> = {}) {
+    // Starting a video is the moderator's "play": go fullscreen right inside this click
+    // (browsers only allow it during a user gesture, so it has to happen before any await).
+    if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) enterNativeFullscreen();
     setBusy(true);
     setActionErr(null);
     const res = await fetch("/api/session/action", {
@@ -70,12 +107,25 @@ function HostInner({ groupId }: { groupId: string }) {
               Video {s.index + 1} / {s.total}
             </span>
           )}
+          {(s.state === "playing" || s.state === "reveal") && !s.paused && (
+            <button
+              className="btn btn-sky btn-sm"
+              disabled={busy}
+              title="Freeze the game and leave. Come back and resume any time."
+              onClick={async () => {
+                await act("pause");
+                router.push(`/g/${groupId}`);
+              }}
+            >
+              ⏸ Pause &amp; exit
+            </button>
+          )}
           {s.state !== "finished" && (
             <button
               className="btn btn-ghost btn-sm"
               disabled={busy}
               onClick={() => {
-                if (confirm("End the game now? Unplayed videos stay in the box for next time.")) act("end");
+                if (confirm("End the game for good? Unplayed videos stay in the box for next time, but you can't resume this game. (Use Pause & exit to come back later.)")) act("end");
               }}
             >
               End game
@@ -125,10 +175,69 @@ function HostInner({ groupId }: { groupId: string }) {
         </section>
       )}
 
-      {(s.state === "playing" || s.state === "reveal") && state.video && (
+      {s.paused && s.state !== "finished" && (
+        <section className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-10 text-center">
+          <p className="text-7xl">⏸</p>
+          <h1 className="title text-5xl text-sunny">Game paused</h1>
+          <p className="max-w-md text-xl text-white/80">
+            Video {s.index + 1} of {s.total}. Players see a &ldquo;paused&rdquo; screen and the timer is frozen. Resume whenever you&apos;re ready, even later or from another device.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button className="btn btn-yellow text-2xl" disabled={busy} onClick={() => act("resume")}>
+              ▶ Resume game
+            </button>
+            <Link href={`/g/${groupId}`} className="btn btn-ghost">
+              Back to the box
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {!s.paused && (s.state === "playing" || s.state === "reveal") && state.video && (
         <section className="grid flex-1 gap-6 px-6 pb-8 lg:grid-cols-[1fr_minmax(340px,420px)]">
-          <div className="flex items-start justify-center">
-            <EmbedPlayer embedUrl={state.video.embedUrl} platform={state.video.platform} sourceUrl={state.video.sourceUrl} />
+          <div className="flex flex-col items-center justify-start gap-2">
+            <EmbedPlayer
+              embedUrl={state.video.embedUrl}
+              platform={state.video.platform}
+              sourceUrl={state.video.sourceUrl}
+              fullscreen={fullscreen}
+              overlay={
+                <div className="flex items-center justify-between gap-2 bg-black/80 px-3 py-2 text-white">
+                  <div className="flex items-center gap-3">
+                    <Countdown ms={remaining} total={s.windowSeconds} size={44} />
+                    <span className="font-display text-lg">
+                      <span className="text-mint">{state.answered}</span>
+                      <span className="text-white/60"> / {state.eligible} locked in</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button className="btn btn-pink btn-sm" disabled={busy} onClick={() => act("reveal")}>
+                      Reveal now
+                    </button>
+                    <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+                      Skip ⏭
+                    </button>
+                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={async () => { await act("pause"); router.push(`/g/${groupId}`); }}>
+                      ⏸
+                    </button>
+                    <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
+                      ⤡ Exit
+                    </button>
+                  </div>
+                </div>
+              }
+            />
+            {s.state === "playing" && !fullscreen && (
+              <button
+                className="btn btn-yellow btn-sm"
+                onClick={() => {
+                  enterNativeFullscreen();
+                  setWantFull(true);
+                }}
+              >
+                ⛶ Full screen
+              </button>
+            )}
           </div>
           <div className="flex flex-col gap-4">
             {s.state === "playing" ? (

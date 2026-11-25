@@ -10,6 +10,7 @@ export const POST = handle(async (req) => {
   const db = supabaseAdmin();
   const { data: sp } = await db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId || "").maybeSingle();
   if (!sp || sp.device_token !== token) throw new HttpError(403, "Please re-join the game");
+  if (s.paused_at) throw new HttpError(409, "The game is paused. Hang tight!");
   // server-authoritative timer
   const win = await getWindowSeconds();
   const fresh = await maybeAutoReveal(s, win);

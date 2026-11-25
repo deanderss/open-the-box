@@ -84,7 +84,7 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
         >
           <div>
             <label className="label">Seat cap</label>
-            <input className="input w-28 py-2" type="number" min={1} max={25} value={newCap} onChange={(e) => setNewCap(Number(e.target.value))} />
+            <input className="input w-28 py-2" type="number" min={1} max={50} value={newCap} onChange={(e) => setNewCap(Number(e.target.value))} />
           </div>
           <button className="btn btn-yellow btn-sm">Save</button>
           {msg && <span className="pb-2 text-sm text-white/70">{msg}</span>}
