@@ -14,6 +14,9 @@ export const GET = handle(async (req) => {
   if (!s) throw new HttpError(404, "No game found with that code");
   const playerId = q.get("playerId");
   const token = q.get("token");
-  const state = await buildState(s, playerId && token ? { kind: "player", playerId, deviceToken: token } : { kind: "anon" });
+  // The host screen polls by sessionId; phones poll by room code with a player token. Only the host screen needs the
+  // per-video playability details (restricted flag, Instagram aspect), so phones never pay for that lookup.
+  const viewer = playerId && token ? ({ kind: "player", playerId, deviceToken: token } as const) : sessionId ? ({ kind: "host" } as const) : ({ kind: "anon" } as const);
+  const state = await buildState(s, viewer);
   return json(state);
 });
