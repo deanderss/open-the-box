@@ -25,8 +25,17 @@ export function layoutFor(platform: string, embedUrl: string): Layout {
     // 3px inset hides the card's rounded corners. Small boost: the like/comment/share buttons sit near the edge.
     return { kind: "crop", iw: 325, ih: 580, rect: { x: 3, y: 3, w: 319, h: 572 }, boost: 1.12 };
   }
-  if (platform === "facebook") return { kind: "crop", iw: 500, ih: 890, rect: { x: 0, y: 0, w: 500, h: 890 }, boost: 1 };
-  return { kind: "fill" }; // youtube
+  if (platform === "facebook") {
+    // The plugin renders a 9:16 player (500x889 at width=500). Reels fill it edge to edge; the Share button
+    // sits ~25px from the right edge, so don't crop more than ~1.22x (it still fills a tall phone).
+    return { kind: "crop", iw: 500, ih: 889, rect: { x: 0, y: 0, w: 500, h: 889 }, boost: 1.22 };
+  }
+  if (platform === "youtube") {
+    // In a portrait iframe the embed switches to the Shorts-style player (Shorts logo, like/share rail on the
+    // right edge), so render it 9:16 and scale it up. Same fill as Instagram; the rail and title can lose a few px at the edges.
+    return { kind: "crop", iw: 360, ih: 640, rect: { x: 0, y: 0, w: 360, h: 640 }, boost: 1.22 };
+  }
+  return { kind: "fill" };
 }
 
 export type Placed = {

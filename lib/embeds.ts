@@ -27,15 +27,48 @@ function host(u: URL) {
 
 const SHORT_HOSTS = ["vm.tiktok.com", "vt.tiktok.com", "fb.watch"];
 
+/** Facebook's "Share" button gives facebook.com/share/r/CODE (or /v/, /p/): a redirect page, not the video. */
+function isFacebookShare(u: URL) {
+  const h = host(u);
+  return (h === "facebook.com" || h === "fb.com") && /^\/share\/(r|v|p)\//.test(u.pathname);
+}
+
 export function needsExpansion(raw: string) {
   const u = safeUrl(raw);
   if (!u) return false;
   const h = host(u);
-  return SHORT_HOSTS.includes(h) || (h === "tiktok.com" && u.pathname.startsWith("/t/"));
+  return SHORT_HOSTS.includes(h) || (h === "tiktok.com" && u.pathname.startsWith("/t/")) || isFacebookShare(u);
+}
+
+/**
+ * Facebook share links only redirect in JavaScript, and the video plugin refuses them ("Video Unavailable").
+ * Facebook's own link-preview crawler is served the real reel URL in og:url, so ask the way it does.
+ */
+async function resolveFacebookShare(raw: string): Promise<string> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(raw, {
+      redirect: "follow",
+      signal: ctrl.signal,
+      headers: { "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)" },
+    });
+    const html = await res.text();
+    clearTimeout(t);
+    const m = html.match(/og:url"\s+content="([^"]+)"/) || html.match(/canonical"\s+href="([^"]+)"/);
+    const found = m?.[1]?.replace(/&amp;/g, "&");
+    const fu = found ? safeUrl(found) : null;
+    if (fu && /(^|\.)facebook\.com$/.test(fu.hostname.toLowerCase())) return fu.toString();
+  } catch {
+    /* fall through to the original link */
+  }
+  return raw;
 }
 
 /** Follow redirects for short links (server-side only). */
 export async function expandUrl(raw: string): Promise<string> {
+  const su = safeUrl(raw);
+  if (su && isFacebookShare(su)) return resolveFacebookShare(raw);
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 6000);
