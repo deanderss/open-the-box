@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
+import { checkPlayable } from "./playable";
 
 export type SessionRow = {
   id: string;
@@ -113,7 +114,23 @@ export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Pr
   return s;
 }
 
-async function showVideoAt(s: SessionRow, index: number) {
+/**
+ * Show the video at `index`. Videos that can't play inside the game (an Instagram reel that only plays on
+ * Instagram, a removed video, ...) are skipped automatically so the host never lands on a black screen.
+ * `log.skipped` reports how many were passed over. If a check can't tell, the video is played.
+ */
+async function showVideoAt(s: SessionRow, index: number, log?: { skipped: number }) {
+  while (index < s.video_order.length) {
+    const id = s.video_order[index];
+    const { data: v } = await db().from("videos").select("platform,embed_url,source_url").eq("id", id).maybeSingle();
+    if (v) {
+      const p = await checkPlayable({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string });
+      if (p !== "restricted" && p !== "gone") break;
+      await db().from("videos").update({ status: "skipped" }).eq("id", id);
+      if (log) log.skipped++;
+    }
+    index++;
+  }
   if (index >= s.video_order.length) {
     const { data } = await db()
       .from("sessions")
@@ -142,13 +159,15 @@ export async function beginSession(s: SessionRow) {
   if (!vids || vids.length === 0) return { error: "The box is empty — no new videos yet!" };
   const order = shuffle(vids.map((v) => v.id as string));
   const { data: s2 } = await db().from("sessions").update({ video_order: order }).eq("id", s.id).select("*").single();
-  return { session: await showVideoAt(s2 as SessionRow, 0) };
+  const log = { skipped: 0 };
+  return { session: await showVideoAt(s2 as SessionRow, 0, log), autoSkipped: log.skipped };
 }
 
 export async function nextVideo(s: SessionRow) {
   if (s.state === "playing") s = await doReveal(s);
   if (s.state !== "reveal") return { error: "Not ready for next" };
-  return { session: await showVideoAt(s, s.current_index + 1) };
+  const log = { skipped: 0 };
+  return { session: await showVideoAt(s, s.current_index + 1, log), autoSkipped: log.skipped };
 }
 
 export async function skipVideo(s: SessionRow) {
@@ -156,7 +175,8 @@ export async function skipVideo(s: SessionRow) {
   if (!vid || (s.state !== "playing" && s.state !== "reveal")) return { error: "Nothing to skip" };
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
-  return { session: await showVideoAt(s, s.current_index + 1) };
+  const log = { skipped: 0 };
+  return { session: await showVideoAt(s, s.current_index + 1, log), autoSkipped: log.skipped };
 }
 
 /** Freeze the game so the moderator can leave and come back later. */

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { layoutFor, place } from "@/lib/immersive";
 
 function useViewport(active: boolean) {
@@ -33,6 +33,8 @@ function useViewport(active: boolean) {
  * It's the same iframe element in both modes (never remounted when toggling), so the video doesn't
  * restart. CSS overlay rather than the Fullscreen API alone so it also works on iPhone.
  */
+const SITE: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", facebook: "Facebook" };
+
 export default function EmbedPlayer({
   embedUrl,
   platform,
@@ -40,6 +42,8 @@ export default function EmbedPlayer({
   className = "",
   fullscreen = false,
   overlay,
+  reloadKey = 0,
+  onReload,
 }: {
   embedUrl: string;
   platform: string;
@@ -47,7 +51,41 @@ export default function EmbedPlayer({
   className?: string;
   fullscreen?: boolean;
   overlay?: ReactNode;
+  /** bump to remount the iframe (the "Reload video" button) */
+  reloadKey?: number;
+  onReload?: () => void;
 }) {
+  const site = SITE[platform] ?? "the site";
+  const frameKey = `${embedUrl}#${reloadKey}`;
+
+  // Loading state: the embed is a cross-origin iframe, so all we can see is its `load` event. Show a spinner until
+  // it has loaded (plus a beat for the player to paint), offer Reload / Open-on-site if it is slow, and quietly
+  // retry once if it never loads at all, so a first cold load is never just a black screen.
+  const [loaded, setLoaded] = useState(false);
+  const [settled, setSettled] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    loadedRef.current = false;
+    setLoaded(false);
+    setSettled(false);
+    setSlow(false);
+    const slowT = setTimeout(() => setSlow(true), 10000);
+    const retryT = setTimeout(() => {
+      if (!loadedRef.current && reloadKey === 0) onReload?.();
+    }, 16000);
+    return () => {
+      clearTimeout(slowT);
+      clearTimeout(retryT);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameKey]);
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => setSettled(true), 1800);
+    return () => clearTimeout(t);
+  }, [loaded]);
+
   const vp = useViewport(fullscreen);
   const layout = useMemo(() => layoutFor(platform, embedUrl), [platform, embedUrl]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
@@ -89,8 +127,12 @@ export default function EmbedPlayer({
         }
       >
         <iframe
-          key={embedUrl}
+          key={frameKey}
           src={embedUrl}
+          onLoad={() => {
+            loadedRef.current = true;
+            setLoaded(true);
+          }}
           className={immersive ? "absolute max-w-none border-0" : "absolute inset-0 h-full w-full border-0"}
           style={
             immersive
@@ -109,6 +151,29 @@ export default function EmbedPlayer({
           scrolling="no"
           referrerPolicy="strict-origin-when-cross-origin"
         />
+        {!settled && (
+          <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
+            <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
+            <p className="max-w-[16rem] text-sm text-white/60">
+              {slow ? "Slow connection, or the site is being fussy." : `The first one can take a few seconds. Tap play when it appears.`}
+            </p>
+            {slow && (
+              <div className="flex flex-wrap justify-center gap-2">
+                {onReload && (
+                  <button className="btn btn-yellow btn-sm" onClick={onReload}>
+                    ↻ Reload
+                  </button>
+                )}
+                {sourceUrl && (
+                  <a className="btn btn-ghost btn-sm" href={sourceUrl} target="_blank" rel="noreferrer">
+                    Open on {site} ↗
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {fullscreen && overlay && (
@@ -123,7 +188,7 @@ export default function EmbedPlayer({
 
       {sourceUrl && !fullscreen && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/50 underline hover:text-white/80">
-          Not loading? Open on {platform === "tiktok" ? "TikTok" : platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : "Facebook"} ↗
+          Not loading? Open on {site} ↗
         </a>
       )}
     </div>

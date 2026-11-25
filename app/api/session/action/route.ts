@@ -11,7 +11,7 @@ export const POST = handle(async (req) => {
   if (s.ended_at && action !== "end") throw new HttpError(400, "This session has ended");
   // While paused, only resume / end / pause / kick make sense
   if (s.paused_at && !["resume", "end", "finish", "pause", "kick"].includes(action || "")) throw new HttpError(409, "The game is paused. Resume it first.");
-  let r: { error?: string; session?: unknown } = {};
+  let r: { error?: string; session?: unknown; autoSkipped?: number } = {};
   switch (action) {
     case "begin":
       r = await beginSession(s);
@@ -47,5 +47,5 @@ export const POST = handle(async (req) => {
       throw new HttpError(400, "Unknown action");
   }
   if (r.error) throw new HttpError(400, r.error);
-  return json({ ok: true });
+  return json({ ok: true, autoSkipped: r.autoSkipped ?? 0 });
 });

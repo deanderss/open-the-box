@@ -3,6 +3,7 @@ import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
+import { checkPlayable, playabilityMessage } from "@/lib/playable";
 
 export const dynamic = "force-dynamic";
 
@@ -41,12 +42,23 @@ export const POST = handle(async (req) => {
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
   let room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
 
-  const results: { url: string; status: "added" | "duplicate" | "invalid" | "full" }[] = [];
-  for (const raw of urls) {
-    const expanded = needsExpansion(raw) ? await expandUrl(raw) : raw;
-    const parsed = parseVideoUrl(expanded) || parseVideoUrl(raw);
+  const results: { url: string; status: "added" | "duplicate" | "invalid" | "full" | "unplayable"; message?: string }[] = [];
+  // Resolve every link first, then ask the platforms (in parallel) whether each video can actually play in the game
+  const resolved = await Promise.all(
+    urls.map(async (raw) => {
+      const expanded = needsExpansion(raw) ? await expandUrl(raw) : raw;
+      const parsed = parseVideoUrl(expanded) || parseVideoUrl(raw);
+      const playable = parsed ? await checkPlayable(parsed) : "unknown";
+      return { raw, parsed, playable };
+    })
+  );
+  for (const { raw, parsed, playable } of resolved) {
     if (!parsed) {
       results.push({ url: raw, status: "invalid" });
+      continue;
+    }
+    if (playable === "restricted" || playable === "gone") {
+      results.push({ url: raw, status: "unplayable", message: playabilityMessage(playable, parsed.platform) });
       continue;
     }
     if (room <= 0) {

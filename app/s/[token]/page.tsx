@@ -6,7 +6,7 @@ import Avatar from "@/components/Avatar";
 import BoxMascot, { Mood } from "@/components/BoxMascot";
 
 type Roster = { id: string; name: string; color: string }[];
-type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full" };
+type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full" | "unplayable"; message?: string };
 type Verdict = "rock" | "meh" | "stink";
 
 const STATUS: Record<Result["status"], { icon: string; text: string }> = {
@@ -14,6 +14,7 @@ const STATUS: Record<Result["status"], { icon: string; text: string }> = {
   duplicate: { icon: "🙃", text: "Someone beat you to it, already in the box" },
   invalid: { icon: "❌", text: "Not a TikTok, Instagram, Facebook or YouTube Shorts video" },
   full: { icon: "📦", text: "Box is stuffed full" },
+  unplayable: { icon: "🚫", text: "That video can't be played in the game" },
 };
 
 const TAUNTS = [
@@ -332,7 +333,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 <motion.li key={i} initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 * i }} className="flex items-start gap-2 rounded-2xl bg-black/30 p-3 text-sm">
                   <span className="text-lg">{STATUS[r.status].icon}</span>
                   <span className="min-w-0">
-                    <span className="block font-semibold">{STATUS[r.status].text}</span>
+                    <span className="block font-semibold">{r.message || STATUS[r.status].text}</span>
                     <span className="block truncate text-xs text-white/50">{r.url}</span>
                   </span>
                 </motion.li>

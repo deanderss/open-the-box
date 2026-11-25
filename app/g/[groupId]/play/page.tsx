@@ -39,6 +39,8 @@ function HostInner({ groupId }: { groupId: string }) {
   const { state, error, refresh, fetchedAt } = useGameState({ sessionId }, 2000);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reloadN, setReloadN] = useState(0); // bumped to remount the video iframe ("Reload video")
   const [origin, setOrigin] = useState("");
   const [wantFull, setWantFull] = useState(true); // moderator can opt out of fullscreen for a video
   const [finishPending, setFinishPending] = useState(false); // "Finished" clicked mid-video: reveal it, then wrap up
@@ -56,6 +58,7 @@ function HostInner({ groupId }: { groupId: string }) {
   useEffect(() => {
     setWantFull(true);
     setFinishPending(false);
+    setReloadN(0);
   }, [s?.index]);
 
   // Grand reveal: only when we actually watch the round flip from playing to reveal
@@ -97,6 +100,10 @@ function HostInner({ groupId }: { groupId: string }) {
     });
     const d = await res.json();
     if (!res.ok) setActionErr(d.error);
+    if (res.ok && d.autoSkipped > 0) {
+      setNotice(`Skipped ${d.autoSkipped} video${d.autoSkipped === 1 ? "" : "s"} that can't play inside the game (removed, or restricted by Instagram/YouTube). They won't come back.`);
+      setTimeout(() => setNotice(null), 12000);
+    }
     await refresh();
     setBusy(false);
   }
@@ -175,6 +182,7 @@ function HostInner({ groupId }: { groupId: string }) {
         </div>
       </header>
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
+      {notice && !fullscreen && <p className="mx-6 rounded-xl bg-sunny/20 p-2 text-center text-sunny">{notice}</p>}
 
       {s.state === "lobby" && (
         <section className="flex flex-1 flex-col items-center justify-center gap-8 px-6 pb-10 lg:flex-row lg:gap-16">
@@ -239,6 +247,8 @@ function HostInner({ groupId }: { groupId: string }) {
           <div className="flex flex-col items-center justify-start gap-2">
             <EmbedPlayer
               key={state.video.embedUrl}
+              reloadKey={reloadN}
+              onReload={() => setReloadN((n) => n + 1)}
               embedUrl={state.video.embedUrl}
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
@@ -255,6 +265,7 @@ function HostInner({ groupId }: { groupId: string }) {
                       }}
                     />
                   </div>
+                  {notice && <p className="mx-3 mt-2 rounded-lg bg-sunny/90 px-3 py-1 text-center text-sm font-semibold text-night">{notice}</p>}
                   <div className="flex items-center justify-between gap-2 px-3 pt-2">
                     <div className="flex items-center gap-3 drop-shadow">
                       <Countdown ms={remaining} total={s.windowSeconds} size={40} />
@@ -270,6 +281,9 @@ function HostInner({ groupId }: { groupId: string }) {
                       <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
                         Skip ⏭
                       </button>
+                      <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." onClick={() => setReloadN((n) => n + 1)}>
+                        ↻
+                      </button>
                       <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={async () => { await act("pause"); router.push(`/g/${groupId}`); }}>
                         ⏸
                       </button>
@@ -282,15 +296,20 @@ function HostInner({ groupId }: { groupId: string }) {
               }
             />
             {s.state === "playing" && !fullscreen && (
-              <button
-                className="btn btn-yellow btn-sm"
-                onClick={() => {
-                  enterNativeFullscreen();
-                  setWantFull(true);
-                }}
-              >
-                ⛶ Full screen
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="btn btn-yellow btn-sm"
+                  onClick={() => {
+                    enterNativeFullscreen();
+                    setWantFull(true);
+                  }}
+                >
+                  ⛶ Full screen
+                </button>
+                <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." onClick={() => setReloadN((n) => n + 1)}>
+                  ↻ Reload video
+                </button>
+              </div>
             )}
           </div>
           <div className="flex flex-col gap-4">
