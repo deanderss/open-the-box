@@ -101,6 +101,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
   const [formErr, setFormErr] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [links, setLinks] = useState<string[]>([""]);
+  const [uploadsOn, setUploadsOn] = useState(false); // personal-video uploads are switched off unless the server says so
   const [files, setFiles] = useState<File[]>([]);
   const [fileMsg, setFileMsg] = useState<string | null>(null);
   const [uploadPct, setUploadPct] = useState(0);
@@ -122,6 +123,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         setGroup(d.group);
+        setUploadsOn(!!d.uploadsEnabled);
         setRoster(d.roster);
         const saved = localStorage.getItem(storeKey);
         if (saved && d.roster.some((p: { id: string }) => p.id === saved)) setPlayerId(saved);
@@ -349,6 +351,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
               <p className="text-center text-xs text-white/50">Tip: paste a bunch of links at once and they&apos;ll split up automatically.</p>
             </div>
 
+            {uploadsOn && (
             <div className="card space-y-3 p-4">
               <label className="label">Or add your own video 🎞 (from your camera roll)</label>
               <input ref={fileInput} type="file" accept="video/*" multiple className="hidden" onChange={(e) => pickFiles(e.target.files)} />
@@ -370,8 +373,9 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 </button>
               )}
               {fileMsg && <p className="rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-xs text-[#FFB3B3]">{fileMsg}</p>}
-              <p className="text-center text-xs text-white/50">Up to {MAX_UPLOAD_MB} MB each (about 30 seconds of phone video). It plays once in the game, then it&apos;s deleted for good.</p>
+              <p className="text-center text-xs text-white/50">Up to {MAX_UPLOAD_MB} MB each (about 30 seconds of phone video). It plays once in the game, then it&apos;s deleted.</p>
             </div>
+            )}
 
             {formErr && <p className="rounded-xl bg-[#FF5E5E]/20 p-3 text-center text-sm text-[#FFB3B3]">{formErr}</p>}
             <motion.button whileTap={{ scale: 0.95 }} className="btn btn-pink w-full text-2xl" disabled={filled === 0}>

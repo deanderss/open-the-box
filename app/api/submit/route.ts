@@ -4,6 +4,7 @@ import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
 import { checkPlayable } from "@/lib/playable";
+import { uploadsEnabled } from "@/lib/uploads";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,7 @@ export const GET = handle(async (req) => {
     .eq("group_id", g.id)
     .eq("active", true)
     .order("display_name");
-  return json({ group: { name: g.name, color: g.color, emoji: g.emoji }, roster: (roster || []).map((p) => ({ id: p.id, name: p.display_name, color: p.avatar_color })) });
+  return json({ uploadsEnabled: uploadsEnabled(), group: { name: g.name, color: g.color, emoji: g.emoji }, roster: (roster || []).map((p) => ({ id: p.id, name: p.display_name, color: p.avatar_color })) });
 });
 
 export const POST = handle(async (req) => {

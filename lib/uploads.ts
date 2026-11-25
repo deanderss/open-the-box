@@ -12,6 +12,27 @@ export const BUCKET = "box-videos";
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // the free Supabase plan's per-file limit
 export const MAX_UPLOADS_PER_BOX = 40; // keeps a box well inside the 1 GB free storage quota
 export const MAX_FILES_PER_SUBMIT = 5;
+/** Project-wide ceiling for files waiting to be played. The free plan's quota is 1 GB; stay clear of it. */
+export const MAX_TOTAL_UPLOAD_BYTES = 800 * 1024 * 1024;
+
+/**
+ * Personal-video uploads are built but switched OFF by default. Turn them on by setting the environment variable
+ * UPLOADS_ENABLED=true (Vercel project settings) and redeploying. Read on the server only; the submit page asks
+ * /api/submit whether to show the upload card.
+ */
+export function uploadsEnabled() {
+  return process.env.UPLOADS_ENABLED === "true";
+}
+
+export function requireUploadsEnabled() {
+  if (!uploadsEnabled()) throw new HttpError(403, "Video uploads aren't turned on yet");
+}
+
+/** Bytes currently stored for uploaded videos that haven't been played (and deleted) yet. */
+export async function storedUploadBytes() {
+  const { data } = await supabaseAdmin().from("videos").select("file_bytes").eq("platform", "upload").not("storage_path", "is", null);
+  return (data || []).reduce((sum, r) => sum + Number(r.file_bytes || 0), 0);
+}
 
 /** extension -> mime type (what iPhones, Androids and browsers produce) */
 export const VIDEO_TYPES: Record<string, string> = {

@@ -1,12 +1,13 @@
 import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
-import { BUCKET, MAX_UPLOAD_BYTES, UPLOAD_PATH_RE, publicUrl, requireSubmitter } from "@/lib/uploads";
+import { BUCKET, MAX_UPLOAD_BYTES, UPLOAD_PATH_RE, publicUrl, requireSubmitter, requireUploadsEnabled } from "@/lib/uploads";
 
 export const dynamic = "force-dynamic";
 
 /** Step 2: the phone says the upload finished. Check the file really is in storage, then put it in the box. */
 export const POST = handle(async (req) => {
+  requireUploadsEnabled();
   if (!rateLimit("upfinish:" + clientIp(req), 60, 60 * 60 * 1000)) throw new HttpError(429, "Slow down!");
   const { token, playerId, path } = await body<{ token?: string; playerId?: string; path?: string }>(req);
   const { db, group, player } = await requireSubmitter(token, playerId);
@@ -38,6 +39,7 @@ export const POST = handle(async (req) => {
     source_url: url,
     embed_url: url,
     storage_path: path,
+    file_bytes: size,
   });
   if (error) {
     if (error.code === "23505") return json({ status: "duplicate" });
