@@ -3,9 +3,13 @@ import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
-import { checkPlayable, playabilityMessage } from "@/lib/playable";
+import { checkPlayable } from "@/lib/playable";
 
 export const dynamic = "force-dynamic";
+
+function siteName(platform: string) {
+  return platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
+}
 
 async function groupByToken(token: string | null) {
   if (!token || token.length < 16) throw new HttpError(404, "This link is invalid or has been replaced");
@@ -42,8 +46,10 @@ export const POST = handle(async (req) => {
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
   let room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
 
-  const results: { url: string; status: "added" | "duplicate" | "invalid" | "full" | "unplayable"; message?: string }[] = [];
-  // Resolve every link first, then ask the platforms (in parallel) whether each video can actually play in the game
+  const results: { url: string; status: "added" | "duplicate" | "invalid" | "full"; message?: string }[] = [];
+  // Resolve every link first, then ask the platforms (in parallel) whether each video can play inside the game.
+  // That only decides the heads-up note: every link in a supported format is accepted either way, because the host
+  // can open the awkward ones in the app during the game.
   const resolved = await Promise.all(
     urls.map(async (raw) => {
       const expanded = needsExpansion(raw) ? await expandUrl(raw) : raw;
@@ -61,10 +67,6 @@ export const POST = handle(async (req) => {
           ? "We couldn't open that share link. Open the video in your browser, copy the address from the address bar and paste that instead"
           : undefined,
       });
-      continue;
-    }
-    if (playable === "gone") {
-      results.push({ url: raw, status: "unplayable", message: playabilityMessage(playable, parsed.platform) });
       continue;
     }
     if (room <= 0) {
@@ -87,8 +89,10 @@ export const POST = handle(async (req) => {
         status: "added",
         message:
           playable === "restricted"
-            ? `Added! Heads up: ${parsed.platform === "instagram" ? "Instagram" : parsed.platform === "youtube" ? "YouTube" : parsed.platform === "tiktok" ? "TikTok" : "Facebook"} only plays this one in its own app, so the host will open it there`
-            : undefined,
+            ? `Added! Heads up: ${siteName(parsed.platform)} only plays this one in its own app, so the host will open it there`
+            : playable === "gone"
+              ? `Added! Heads up: ${siteName(parsed.platform)} says this one may be removed or private, so the host will check it in the app`
+              : undefined,
       });
     }
   }

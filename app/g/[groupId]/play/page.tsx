@@ -39,7 +39,6 @@ function HostInner({ groupId }: { groupId: string }) {
   const { state, error, refresh, fetchedAt } = useGameState({ sessionId }, 2000);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [reloadN, setReloadN] = useState(0); // bumped to remount the video iframe ("Reload video")
   const [origin, setOrigin] = useState("");
   const [wantFull, setWantFull] = useState(true); // moderator can opt out of fullscreen for a video
@@ -100,10 +99,6 @@ function HostInner({ groupId }: { groupId: string }) {
     });
     const d = await res.json();
     if (!res.ok) setActionErr(d.error);
-    if (res.ok && d.autoSkipped > 0) {
-      setNotice(`Skipped ${d.autoSkipped} video${d.autoSkipped === 1 ? "" : "s"} that can't play inside the game (removed, or restricted by Instagram/YouTube). They won't come back.`);
-      setTimeout(() => setNotice(null), 12000);
-    }
     await refresh();
     setBusy(false);
   }
@@ -182,7 +177,6 @@ function HostInner({ groupId }: { groupId: string }) {
         </div>
       </header>
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
-      {notice && !fullscreen && <p className="mx-6 rounded-xl bg-sunny/20 p-2 text-center text-sunny">{notice}</p>}
 
       {s.state === "lobby" && (
         <section className="flex flex-1 flex-col items-center justify-center gap-8 px-6 pb-10 lg:flex-row lg:gap-16">
@@ -253,7 +247,7 @@ function HostInner({ groupId }: { groupId: string }) {
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
               aspect={state.video.aspect}
-              blocked={state.video.restricted}
+              blocked={state.video.blocked}
               fullscreen={fullscreen}
               overlay={
                 <div className="text-white">
@@ -267,7 +261,6 @@ function HostInner({ groupId }: { groupId: string }) {
                       }}
                     />
                   </div>
-                  {notice && <p className="mx-3 mt-2 rounded-lg bg-sunny/90 px-3 py-1 text-center text-sm font-semibold text-night">{notice}</p>}
                   <div className="flex items-center justify-between gap-2 px-3 pt-2">
                     <div className="flex items-center gap-3 drop-shadow">
                       <Countdown ms={remaining} total={s.windowSeconds} size={40} />

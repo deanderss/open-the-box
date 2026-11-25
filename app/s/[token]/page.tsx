@@ -6,7 +6,7 @@ import Avatar from "@/components/Avatar";
 import BoxMascot, { Mood } from "@/components/BoxMascot";
 
 type Roster = { id: string; name: string; color: string }[];
-type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full" | "unplayable"; message?: string };
+type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full"; message?: string };
 type Verdict = "rock" | "meh" | "stink";
 
 const STATUS: Record<Result["status"], { icon: string; text: string }> = {
@@ -14,7 +14,6 @@ const STATUS: Record<Result["status"], { icon: string; text: string }> = {
   duplicate: { icon: "🙃", text: "Someone beat you to it, already in the box" },
   invalid: { icon: "❌", text: "Not a TikTok, Instagram, Facebook or YouTube Shorts video" },
   full: { icon: "📦", text: "Box is stuffed full" },
-  unplayable: { icon: "🚫", text: "That video can't be played in the game" },
 };
 
 const TAUNTS = [

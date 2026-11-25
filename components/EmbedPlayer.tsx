@@ -41,7 +41,7 @@ export default function EmbedPlayer({
   platform,
   sourceUrl,
   aspect,
-  blocked = false,
+  blocked,
   className = "",
   fullscreen = false,
   overlay,
@@ -54,7 +54,7 @@ export default function EmbedPlayer({
   /** video height / width when the server knows it (Instagram) */
   aspect?: number;
   /** the site won't play this video inside other apps: show an "open it there" panel instead of a black frame */
-  blocked?: boolean;
+  blocked?: "restricted" | "gone";
   className?: string;
   fullscreen?: boolean;
   overlay?: ReactNode;
@@ -64,7 +64,7 @@ export default function EmbedPlayer({
 }) {
   const site = SITE[platform] ?? "the site";
   const [forced, setForced] = useState(false); // "try it here anyway"
-  const showBlocked = blocked && !forced;
+  const showBlocked = !!blocked && !forced;
   const frameKey = `${embedUrl}#${reloadKey}`;
 
   // Loading state: the embed is a cross-origin iframe, so all we can see is its `load` event. Show a spinner until
@@ -142,9 +142,13 @@ export default function EmbedPlayer({
             className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 overflow-y-auto bg-night p-6 text-center text-white ${fullscreen ? "pt-24" : ""}`}
           >
             <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-5xl shadow-chunky">📲</div>
-            <h2 className="font-display text-2xl leading-tight sm:text-3xl">This one plays on {site}</h2>
+            <h2 className="font-display text-2xl leading-tight sm:text-3xl">
+              {blocked === "gone" ? "This one may be gone" : `This one plays on ${site}`}
+            </h2>
             <p className="max-w-xs text-sm text-white/70">
-              {site} only lets this video play in its own app. Tap the button to open it there, play it for everyone, then come back here for the answers.
+              {blocked === "gone"
+                ? `${site} says this video is removed or private. Open it in the app to check, and play it there if it still works, then come back here for the answers.`
+                : `${site} only lets this video play in its own app. Tap the button to open it there, play it for everyone, then come back here for the answers.`}
             </p>
             {sourceUrl && (
               <button type="button" className="btn btn-yellow touch-manipulation" onClick={() => openInApp(platform, sourceUrl)}>

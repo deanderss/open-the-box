@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
-import { checkMedia, checkPlayable } from "./playable";
+import { checkMedia } from "./playable";
 
 export type SessionRow = {
   id: string;
@@ -115,23 +115,11 @@ export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Pr
 }
 
 /**
- * Show the video at `index`. Removed/private videos are skipped automatically. Videos that exist but only play on
- * their own site (an Instagram reel with embedding off) are NOT skipped: the host screen shows an "open it on
- * Instagram" panel for those and the host plays it in the app. `log.skipped` reports how many were passed over.
- * If a check can't tell, the video is played.
+ * Show the video at `index`. Videos are NEVER skipped automatically: one that can't play inside the game (an
+ * Instagram reel with embedding off, a removed video, ...) is still shown, and the host screen replaces the black
+ * frame with an "open it in the app" panel (see `video.blocked` in buildState).
  */
-async function showVideoAt(s: SessionRow, index: number, log?: { skipped: number }) {
-  while (index < s.video_order.length) {
-    const id = s.video_order[index];
-    const { data: v } = await db().from("videos").select("platform,embed_url,source_url").eq("id", id).maybeSingle();
-    if (v) {
-      const p = await checkPlayable({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string });
-      if (p !== "gone") break;
-      await db().from("videos").update({ status: "skipped" }).eq("id", id);
-      if (log) log.skipped++;
-    }
-    index++;
-  }
+async function showVideoAt(s: SessionRow, index: number) {
   if (index >= s.video_order.length) {
     const { data } = await db()
       .from("sessions")
@@ -160,15 +148,13 @@ export async function beginSession(s: SessionRow) {
   if (!vids || vids.length === 0) return { error: "The box is empty — no new videos yet!" };
   const order = shuffle(vids.map((v) => v.id as string));
   const { data: s2 } = await db().from("sessions").update({ video_order: order }).eq("id", s.id).select("*").single();
-  const log = { skipped: 0 };
-  return { session: await showVideoAt(s2 as SessionRow, 0, log), autoSkipped: log.skipped };
+  return { session: await showVideoAt(s2 as SessionRow, 0) };
 }
 
 export async function nextVideo(s: SessionRow) {
   if (s.state === "playing") s = await doReveal(s);
   if (s.state !== "reveal") return { error: "Not ready for next" };
-  const log = { skipped: 0 };
-  return { session: await showVideoAt(s, s.current_index + 1, log), autoSkipped: log.skipped };
+  return { session: await showVideoAt(s, s.current_index + 1) };
 }
 
 export async function skipVideo(s: SessionRow) {
@@ -176,8 +162,7 @@ export async function skipVideo(s: SessionRow) {
   if (!vid || (s.state !== "playing" && s.state !== "reveal")) return { error: "Nothing to skip" };
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
-  const log = { skipped: 0 };
-  return { session: await showVideoAt(s, s.current_index + 1, log), autoSkipped: log.skipped };
+  return { session: await showVideoAt(s, s.current_index + 1) };
 }
 
 /** Freeze the game so the moderator can leave and come back later. */
@@ -265,11 +250,11 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     if (v) {
       video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
       if (viewer.kind === "host") {
-        // The host screen needs to know if this one can't play inline (shows the "open it on <site>" panel) and, for
+        // The host screen needs to know if this one can't play inline (shows the "open it in the app" panel) and, for
         // Instagram, the video's shape for the fullscreen crop. Cached per server instance, so cheap after the first look.
         const m = await checkMedia({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string }).catch(() => null);
         if (m?.aspect) video.aspect = m.aspect;
-        if (m?.playability === "restricted") video.restricted = true;
+        if (m?.playability === "restricted" || m?.playability === "gone") video.blocked = m.playability;
       }
       sender = v.submitted_by as string | null;
       if (s.state === "reveal") Object.assign(video, { avgRating: v.avg_rating, ratingCount: v.rating_count });

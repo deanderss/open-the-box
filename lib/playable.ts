@@ -101,12 +101,3 @@ export async function checkMedia(v: { platform: string; embedUrl: string; source
 export async function checkPlayable(v: { platform: string; embedUrl: string; sourceUrl: string }): Promise<Playability> {
   return (await checkMedia(v)).playability;
 }
-
-/** Plain-English reason shown to whoever submitted the link. */
-export function playabilityMessage(p: Playability, platform: string) {
-  const name = platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
-  if (p === "gone") return `${name} says this video is gone or private, so it can't be played`;
-  return platform === "instagram"
-    ? "Instagram won't play this reel inside other apps (only on Instagram). Pick a different one!"
-    : `${name} doesn't allow this video to be played inside other apps. Pick a different one!`;
-}
