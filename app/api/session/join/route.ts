@@ -7,8 +7,13 @@ import { rateLimit, clientIp } from "@/lib/ratelimit";
 export const POST = handle(async (req) => {
   if (!rateLimit("join:" + clientIp(req), 60, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries");
   const { code, playerId, token } = await body<{ code?: string; playerId?: string; token?: string }>(req);
+  const ip = clientIp(req);
   const s = code ? await getSessionByCode(code) : null;
-  if (!s || s.state === "finished") throw new HttpError(404, "No live game with that code");
+  if (!s || s.state === "finished") {
+    // A wrong/mistyped code is expected now and then, but repeated misses look like someone guessing codes.
+    if (!rateLimit(`codemiss:${ip}`, 30, 10 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
+    throw new HttpError(404, "No live game with that code");
+  }
   const db = supabaseAdmin();
   if (!playerId) {
     const { data: g } = await db.from("groups").select("name,color,emoji").eq("id", s.group_id).single();
@@ -29,7 +34,12 @@ export const POST = handle(async (req) => {
   }
   const newToken = randomToken();
   const { error } = await db.from("session_players").insert({ session_id: s.id, player_id: playerId, device_token: newToken });
-  if (error) throw new HttpError(409, "Someone already joined as that name.");
+  if (error) {
+    // Only a genuine race on the same name/session is "taken" — anything else (a dropped connection, a
+    // transient DB error) should look like a retry-able failure, not a permanent "someone beat you to it".
+    if (error.code === "23505") throw new HttpError(409, "Someone already joined as that name. Ask the moderator to free it up.");
+    throw new HttpError(503, "Couldn't join right now — try again");
+  }
   await broadcast(s.id);
   return json({ token: newToken, sessionId: s.id });
 });

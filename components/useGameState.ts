@@ -46,11 +46,10 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
       const q = new URLSearchParams();
       if (sessionId) q.set("sessionId", sessionId);
       else if (code) q.set("code", code);
-      if (playerId && token) {
-        q.set("playerId", playerId);
-        q.set("token", token);
-      }
-      const res = await fetch(`/api/session/state?${q}`, { cache: "no-store" });
+      if (playerId && token) q.set("playerId", playerId);
+      // The player token moves to a header instead of the URL, so it never shows up in server access logs
+      // or browser history.
+      const res = await fetch(`/api/session/state?${q}`, { cache: "no-store", headers: playerId && token ? { "x-otb-token": token } : undefined });
       const data = await res.json();
       if (!res.ok) setError(data.error || "Error");
       else {

@@ -3,7 +3,7 @@ import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
-import { checkPlayable } from "@/lib/playable";
+import { checkMedia } from "@/lib/playable";
 import { uploadsEnabled } from "@/lib/uploads";
 
 export const dynamic = "force-dynamic";
@@ -55,11 +55,12 @@ export const POST = handle(async (req) => {
     urls.map(async (raw) => {
       const expanded = needsExpansion(raw) ? await expandUrl(raw) : raw;
       const parsed = parseVideoUrl(expanded) || parseVideoUrl(raw);
-      const playable = parsed ? await checkPlayable(parsed) : "unknown";
-      return { raw, parsed, playable };
+      const media = parsed ? await checkMedia(parsed) : null;
+      return { raw, parsed, media };
     })
   );
-  for (const { raw, parsed, playable } of resolved) {
+  for (const { raw, parsed, media } of resolved) {
+    const playable = media?.playability ?? "unknown";
     if (!parsed) {
       results.push({
         url: raw,
@@ -80,6 +81,10 @@ export const POST = handle(async (req) => {
       platform: parsed.platform,
       source_url: parsed.sourceUrl,
       embed_url: parsed.embedUrl,
+      // Saved now so the host screen can show the restricted/gone flag and the Instagram crop aspect
+      // without re-checking the platform live on every poll during the game.
+      playability: media?.playability ?? null,
+      aspect: media?.aspect ?? null,
     });
     if (error) {
       results.push({ url: raw, status: error.code === "23505" ? "duplicate" : "invalid" });

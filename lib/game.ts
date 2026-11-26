@@ -1,8 +1,9 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
-import { checkMedia } from "./playable";
+import { checkMedia, type Media } from "./playable";
 import { purgeUpload } from "./uploads";
 import { SENDER_BONUS } from "./points";
+import { HttpError } from "./api";
 
 export type SessionRow = {
   id: string;
@@ -19,13 +20,23 @@ export type SessionRow = {
 };
 
 const db = () => supabaseAdmin();
+
+// The answer window rarely changes mid-game, but buildState reads it on every single poll (every host and
+// phone, every 2s). Caching it per server instance for a minute avoids paying for that round trip every time.
+let windowCache: { v: number; until: number } | null = null;
 export async function getWindowSeconds() {
+  const now = Date.now();
+  if (windowCache && windowCache.until > now) return windowCache.v;
   const { data } = await db().from("app_settings").select("answer_window_seconds").eq("id", 1).single();
-  return (data?.answer_window_seconds as number) ?? 150;
+  const v = (data?.answer_window_seconds as number) ?? 150;
+  windowCache = { v, until: now + 60_000 };
+  return v;
 }
 
+const DB_DOWN = "The game service is having trouble — try again in a moment";
+
 export async function getSessionByCode(code: string, includeRecentlyEnded = false): Promise<SessionRow | null> {
-  const { data } = await db()
+  const { data, error } = await db()
     .from("sessions")
     .select("*")
     .eq("room_code", code.toUpperCase().trim())
@@ -33,8 +44,9 @@ export async function getSessionByCode(code: string, includeRecentlyEnded = fals
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error) throw new HttpError(503, DB_DOWN); // a real DB/network failure, not just "no rows"
   if (data || !includeRecentlyEnded) return (data as SessionRow) ?? null;
-  const { data: ended } = await db()
+  const { data: ended, error: error2 } = await db()
     .from("sessions")
     .select("*")
     .eq("room_code", code.toUpperCase().trim())
@@ -42,11 +54,13 @@ export async function getSessionByCode(code: string, includeRecentlyEnded = fals
     .order("ended_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error2) throw new HttpError(503, DB_DOWN);
   return (ended as SessionRow) ?? null;
 }
 
 export async function getSession(id: string): Promise<SessionRow | null> {
-  const { data } = await db().from("sessions").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await db().from("sessions").select("*").eq("id", id).maybeSingle();
+  if (error) throw new HttpError(503, DB_DOWN);
   return (data as SessionRow) ?? null;
 }
 
@@ -56,9 +70,12 @@ export function currentVideoId(s: SessionRow) {
 
 /** Fire-and-forget realtime nudge so screens refetch instantly. Payload carries no secrets. */
 export async function broadcast(sessionId: string) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 1500); // never let a slow realtime call hold up the action itself
   try {
     await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/realtime/v1/api/broadcast`, {
       method: "POST",
+      signal: ctrl.signal,
       headers: {
         "Content-Type": "application/json",
         apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -68,18 +85,30 @@ export async function broadcast(sessionId: string) {
     });
   } catch {
     /* polling fallback covers it */
+  } finally {
+    clearTimeout(t);
   }
 }
 
 async function counts(s: SessionRow) {
   const vid = currentVideoId(s);
-  const [{ count: joined }, { count: answered }] = await Promise.all([
-    db().from("session_players").select("*", { count: "exact", head: true }).eq("session_id", s.id),
-    vid
-      ? db().from("responses").select("*", { count: "exact", head: true }).eq("session_id", s.id).eq("video_id", vid)
-      : Promise.resolve({ count: 0 }),
-  ]);
-  return { joined: joined ?? 0, answered: answered ?? 0 };
+  // A kicked player's old answer row is never deleted, just orphaned from session_players — so "answered"
+  // only counts responses from players still actually in the room, otherwise a kick could leave the round
+  // stuck one answer short of ever auto-revealing (or, worse, reveal on a count that includes someone gone).
+  const { data: sp } = await db().from("session_players").select("player_id").eq("session_id", s.id);
+  const joinedIds = (sp || []).map((r) => r.player_id as string);
+  const joined = joinedIds.length;
+  let answered = 0;
+  if (vid && joined > 0) {
+    const { count } = await db()
+      .from("responses")
+      .select("*", { count: "exact", head: true })
+      .eq("session_id", s.id)
+      .eq("video_id", vid)
+      .in("player_id", joinedIds);
+    answered = count ?? 0;
+  }
+  return { joined, answered };
 }
 
 /** Move to reveal (idempotent). Recomputes the video's rating. */
@@ -121,24 +150,36 @@ export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Pr
  * frame with an "open it in the app" panel (see `video.blocked` in buildState).
  */
 async function showVideoAt(s: SessionRow, index: number) {
+  // Guarded on the exact index (and that the game hasn't ended) we expect to be moving on FROM: a double
+  // "next"/"skip" tap, or two moderators pressing it at once, means two requests both compute `index` from
+  // the same stale `s` — only the first one's write can match, so the second becomes a harmless no-op that
+  // just reports back whatever the first one already did, instead of skipping an extra video.
   if (index >= s.video_order.length) {
     const { data } = await db()
       .from("sessions")
       .update({ state: "finished", current_index: s.video_order.length, ended_at: new Date().toISOString() })
       .eq("id", s.id)
+      .eq("current_index", s.current_index)
+      .is("ended_at", null)
       .select("*")
-      .single();
+      .maybeSingle();
+    if (!data) return (await getSession(s.id))!;
     await broadcast(s.id);
     return data as SessionRow;
   }
   const vid = s.video_order[index];
-  await db().from("videos").update({ status: "played", played_at: new Date().toISOString() }).eq("id", vid);
   const { data } = await db()
     .from("sessions")
     .update({ state: "playing", current_index: index, video_started_at: new Date().toISOString(), reveal_at: null })
     .eq("id", s.id)
+    .eq("current_index", s.current_index)
+    .is("ended_at", null)
     .select("*")
-    .single();
+    .maybeSingle();
+  if (!data) return (await getSession(s.id))!; // someone else already moved on; report the current truth
+  // Only mark the video played once we know the session actually advanced — otherwise a failed/raced
+  // update could leave a video flagged "played" without ever having been shown.
+  await db().from("videos").update({ status: "played", played_at: new Date().toISOString() }).eq("id", vid);
   await broadcast(s.id);
   return data as SessionRow;
 }
@@ -148,7 +189,9 @@ export async function beginSession(s: SessionRow) {
   const { data: vids } = await db().from("videos").select("id").eq("group_id", s.group_id).eq("status", "queued");
   if (!vids || vids.length === 0) return { error: "The box is empty — no new videos yet!" };
   const order = shuffle(vids.map((v) => v.id as string));
-  const { data: s2 } = await db().from("sessions").update({ video_order: order }).eq("id", s.id).select("*").single();
+  // Guarded on still being in the lobby, so a double "Start the show" tap can't re-shuffle the order twice.
+  const { data: s2 } = await db().from("sessions").update({ video_order: order }).eq("id", s.id).eq("state", "lobby").select("*").maybeSingle();
+  if (!s2) return { error: "Already started" };
   return { session: await showVideoAt(s2 as SessionRow, 0) };
 }
 
@@ -221,24 +264,97 @@ export async function endSession(s: SessionRow) {
 
 type Viewer = { kind: "host" } | { kind: "player"; playerId: string; deviceToken: string } | { kind: "anon" };
 
+type VideoRow = {
+  id: string;
+  platform: string;
+  embed_url: string;
+  source_url: string;
+  submitted_by: string | null;
+  avg_rating: number | null;
+  rating_count: number | null;
+  status: string;
+  playability?: string | null;
+  aspect?: number | null;
+};
+
+/**
+ * Host-only per-video extras: the restricted/gone flag and, for Instagram, the clip's shape for the
+ * fullscreen crop. Uses the value saved on the row at submit time when there is one; only reaches out to the
+ * platform live for older rows that predate that column, and then writes the result back so every poll after
+ * this one skips the network call entirely.
+ */
+async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "restricted" | "gone" }> {
+  if (v.playability) {
+    const out: { aspect?: number; blocked?: "restricted" | "gone" } = {};
+    if (v.aspect) out.aspect = v.aspect;
+    if (v.playability === "restricted" || v.playability === "gone") out.blocked = v.playability;
+    return out;
+  }
+  const m: Media | null = await checkMedia({ platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url }).catch(() => null);
+  if (m) {
+    db()
+      .from("videos")
+      .update({ playability: m.playability, aspect: m.aspect ?? null })
+      .eq("id", v.id)
+      .then(
+        () => {},
+        () => {}
+      );
+  }
+  const out: { aspect?: number; blocked?: "restricted" | "gone" } = {};
+  if (m?.aspect) out.aspect = m.aspect;
+  if (m?.playability === "restricted" || m?.playability === "gone") out.blocked = m.playability;
+  return out;
+}
+
+const finaleCache = new Map<string, { v: Record<string, unknown>; until: number }>();
+
 /** Build the public state snapshot. NEVER includes the sender before reveal. */
 export async function buildState(sIn: SessionRow, viewer: Viewer) {
   const windowSeconds = await getWindowSeconds();
-  const s = await maybeAutoReveal(sIn, windowSeconds);
-  const vid = currentVideoId(s);
+  const vid = currentVideoId(sIn); // stable: auto-reveal below only ever flips playing -> reveal, never the index
+  const nextIdx = sIn.current_index + 1;
+  const needsNext = viewer.kind === "host" && (sIn.state === "playing" || sIn.state === "reveal") && nextIdx < sIn.video_order.length;
+  // Every video shown so far (for the sender bonus) plus the next one in line (host only, to preload it).
+  // Skipped once the game is finished: `current_index` there points at the last video played, but the
+  // response nulls `video`/`upNext` out anyway, so there is nothing to look up a live playability check for.
+  const relevantIds = Array.from(new Set([...sIn.video_order.slice(0, Math.max(0, sIn.current_index + 1)), ...(needsNext ? [sIn.video_order[nextIdx]] : [])]));
 
-  const [{ data: group }, { data: roster }, { data: sp }, { data: resps }] = await Promise.all([
-    db().from("groups").select("id,name,color,emoji").eq("id", s.group_id).single(),
-    db().from("players").select("id,display_name,avatar_color").eq("group_id", s.group_id).eq("active", true).order("display_name"),
-    db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", s.id).order("joined_at"),
-    db().from("responses").select("player_id,video_id,rating,guessed_player_id,is_correct,is_decoy").eq("session_id", s.id),
+  const [groupRes, rosterRes, spRes, respRes, vidsRes] = await Promise.all([
+    db().from("groups").select("id,name,color,emoji").eq("id", sIn.group_id).single(),
+    db().from("players").select("id,display_name,avatar_color").eq("group_id", sIn.group_id).eq("active", true).order("display_name"),
+    db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", sIn.id).order("joined_at"),
+    db().from("responses").select("player_id,video_id,rating,guessed_player_id,is_correct,is_decoy").eq("session_id", sIn.id),
+    relevantIds.length
+      ? db().from("videos").select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect").in("id", relevantIds)
+      : Promise.resolve({ data: [] as VideoRow[], error: null }),
   ]);
+  if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error) throw new HttpError(503, DB_DOWN);
+  const group = groupRes.data;
+  const roster = rosterRes.data;
+  const sp = spRes.data;
+  const resps = respRes.data;
+  const vidsMap = new Map(((vidsRes.data as VideoRow[]) || []).map((v) => [v.id, v]));
+
+  const joinedIds = new Set((sp || []).map((r) => r.player_id as string));
+
+  // Decide auto-reveal from the data already fetched above, instead of the separate count queries that
+  // maybeAutoReveal() runs when called on its own (from the answer route). Only the reveal write itself —
+  // when it actually happens — still touches the database.
+  let s = sIn;
+  if (sIn.state === "playing" && sIn.video_started_at && !sIn.paused_at) {
+    const elapsed = (Date.now() - new Date(sIn.video_started_at).getTime()) / 1000;
+    const answeredNow = (resps || []).filter((r) => r.video_id === vid && joinedIds.has(r.player_id as string)).length;
+    if (elapsed >= windowSeconds || (joinedIds.size > 0 && answeredNow >= joinedIds.size)) s = await doReveal(sIn);
+  }
 
   const rosterMap = new Map((roster || []).map((p) => [p.id as string, p]));
   const nameOf = (id?: string | null) => (id ? (rosterMap.get(id)?.display_name as string) ?? "Someone" : null);
   const colorOf = (id?: string | null) => (id ? (rosterMap.get(id)?.avatar_color as string) ?? "#999" : null);
   const currentResps = (resps || []).filter((r) => r.video_id === vid);
-  const answeredSet = new Set(currentResps.map((r) => r.player_id));
+  // A kicked player's old answer sticks around in `responses`, but they're no longer in `sp` — don't count
+  // them as "locked in" (that number is shown to everyone still playing).
+  const answeredSet = new Set(currentResps.filter((r) => joinedIds.has(r.player_id as string)).map((r) => r.player_id));
 
   let me: Record<string, unknown> | null = null;
   let myValid = false;
@@ -249,19 +365,31 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
 
   let video: Record<string, unknown> | null = null;
   let sender: string | null = null;
-  if (vid) {
-    const { data: v } = await db().from("videos").select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count").eq("id", vid).single();
-    if (v) {
-      video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
-      if (viewer.kind === "host") {
-        // The host screen needs to know if this one can't play inline (shows the "open it in the app" panel) and, for
-        // Instagram, the video's shape for the fullscreen crop. Cached per server instance, so cheap after the first look.
-        const m = await checkMedia({ platform: v.platform as string, embedUrl: v.embed_url as string, sourceUrl: v.source_url as string }).catch(() => null);
-        if (m?.aspect) video.aspect = m.aspect;
-        if (m?.playability === "restricted" || m?.playability === "gone") video.blocked = m.playability;
-      }
-      sender = v.submitted_by as string | null;
-      if (s.state === "reveal") Object.assign(video, { avgRating: v.avg_rating, ratingCount: v.rating_count });
+  const v = vid ? vidsMap.get(vid) : undefined;
+  if (v) {
+    video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
+    sender = v.submitted_by;
+    if (s.state === "reveal") Object.assign(video, { avgRating: v.avg_rating, ratingCount: v.rating_count });
+  }
+
+  // Host only: the next video in line, so the stage can load it in the background while this one plays.
+  let upNext: Record<string, unknown> | null = null;
+  const nv = needsNext ? vidsMap.get(sIn.video_order[nextIdx]) : undefined;
+  if (nv && (s.state === "playing" || s.state === "reveal")) {
+    upNext = { id: nv.id, platform: nv.platform, embedUrl: nv.embed_url, sourceUrl: nv.source_url };
+  }
+
+  // The two live-platform fallback checks (when a video predates the saved playability column) run together
+  // rather than one after the other.
+  if (viewer.kind === "host" && (s.state === "playing" || s.state === "reveal")) {
+    const [infoV, infoN] = await Promise.all([v ? mediaInfo(v) : Promise.resolve(null), nv ? mediaInfo(nv) : Promise.resolve(null)]);
+    if (video && infoV) {
+      if (infoV.aspect) video.aspect = infoV.aspect;
+      if (infoV.blocked) video.blocked = infoV.blocked;
+    }
+    if (upNext && infoN) {
+      if (infoN.aspect) upNext.aspect = infoN.aspect;
+      if (infoN.blocked) upNext.blocked = infoN.blocked;
     }
   }
 
@@ -277,31 +405,16 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   const bonusMap = new Map<string, number>();
   if (s.state !== "lobby" && s.current_index >= 0) {
     const revealedUpTo = s.state === "playing" ? s.current_index : s.current_index + 1; // exclusive
-    const revealedIds = s.video_order.slice(0, revealedUpTo);
-    if (revealedIds.length) {
-      const { data: sent } = await db().from("videos").select("id,submitted_by").in("id", revealedIds).eq("status", "played");
-      (sent || []).forEach((v) => {
-        const by = v.submitted_by as string | null;
-        if (by && scoreMap.has(by)) bonusMap.set(by, (bonusMap.get(by) || 0) + SENDER_BONUS);
-      });
-    }
+    s.video_order.slice(0, revealedUpTo).forEach((id) => {
+      const rv = vidsMap.get(id);
+      const by = rv?.submitted_by ?? null;
+      if (rv?.status === "played" && by && scoreMap.has(by)) bonusMap.set(by, (bonusMap.get(by) || 0) + SENDER_BONUS);
+    });
   }
   const pointsOf = (pid: string) => (scoreMap.get(pid) || 0) + (bonusMap.get(pid) || 0);
   const scores = Array.from(scoreMap.entries())
     .map(([pid, correct]) => ({ playerId: pid, name: nameOf(pid), color: colorOf(pid), correct, bonus: bonusMap.get(pid) || 0, points: pointsOf(pid) }))
     .sort((a, b) => b.points - a.points || b.correct - a.correct);
-
-  // Host only: the next video in line, so the stage can load it in the background while this one plays.
-  let upNext: Record<string, unknown> | null = null;
-  if (viewer.kind === "host" && (s.state === "playing" || s.state === "reveal") && s.current_index + 1 < s.video_order.length) {
-    const { data: nv } = await db().from("videos").select("id,platform,embed_url,source_url").eq("id", s.video_order[s.current_index + 1]).maybeSingle();
-    if (nv) {
-      const m = await checkMedia({ platform: nv.platform as string, embedUrl: nv.embed_url as string, sourceUrl: nv.source_url as string }).catch(() => null);
-      upNext = { id: nv.id, platform: nv.platform, embedUrl: nv.embed_url, sourceUrl: nv.source_url };
-      if (m?.aspect) upNext.aspect = m.aspect;
-      if (m?.playability === "restricted" || m?.playability === "gone") upNext.blocked = m.playability;
-    }
-  }
 
   let reveal: Record<string, unknown> | null = null;
   if (s.state === "reveal" && vid) {
@@ -335,36 +448,44 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     };
   }
 
+  // The finale screen's figures almost never change once the game is over, but it stays polled at the same
+  // interval as everything else — cache it per instance for a minute instead of re-querying every poll.
   let finale: Record<string, unknown> | null = null;
   if (s.state === "finished") {
-    const shown = s.video_order.slice(0, Math.max(0, s.current_index + 1));
-    let topVideo = null;
-    if (shown.length) {
-      const { data: tv } = await db()
+    const cached = finaleCache.get(s.id);
+    if (cached && cached.until > Date.now()) {
+      finale = cached.v;
+    } else {
+      const shown = s.video_order.slice(0, Math.max(0, s.current_index + 1));
+      let topVideo = null;
+      if (shown.length) {
+        const { data: tv } = await db()
+          .from("videos")
+          .select("id,platform,embed_url,source_url,avg_rating,rating_count,submitted_by")
+          .in("id", shown)
+          .eq("status", "played")
+          .neq("platform", "upload") // personal videos are deleted after they play
+          .not("avg_rating", "is", null)
+          .order("avg_rating", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (tv) topVideo = { ...tv, senderName: nameOf(tv.submitted_by as string) };
+      }
+      const { data: allTime } = await db()
+        .from("group_leaderboard")
+        .select("player_id,display_name,avatar_color,correct,guesses,submitted,points")
+        .eq("group_id", s.group_id)
+        .order("points", { ascending: false })
+        .order("correct", { ascending: false })
+        .limit(5);
+      const { count: remaining } = await db()
         .from("videos")
-        .select("id,platform,embed_url,source_url,avg_rating,rating_count,submitted_by")
-        .in("id", shown)
-        .eq("status", "played")
-        .neq("platform", "upload") // personal videos are deleted after they play
-        .not("avg_rating", "is", null)
-        .order("avg_rating", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (tv) topVideo = { ...tv, senderName: nameOf(tv.submitted_by as string) };
+        .select("*", { count: "exact", head: true })
+        .eq("group_id", s.group_id)
+        .eq("status", "queued");
+      finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0 };
+      finaleCache.set(s.id, { v: finale, until: Date.now() + 60_000 });
     }
-    const { data: allTime } = await db()
-      .from("group_leaderboard")
-      .select("player_id,display_name,avatar_color,correct,guesses,submitted,points")
-      .eq("group_id", s.group_id)
-      .order("points", { ascending: false })
-      .order("correct", { ascending: false })
-      .limit(5);
-    const { count: remaining } = await db()
-      .from("videos")
-      .select("*", { count: "exact", head: true })
-      .eq("group_id", s.group_id)
-      .eq("status", "queued");
-    finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0 };
   }
 
   const startedMs = s.video_started_at ? new Date(s.video_started_at).getTime() : null;
@@ -391,7 +512,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       color: colorOf(r.player_id as string),
       answered: answeredSet.has(r.player_id),
     })),
-    answered: currentResps.length,
+    answered: answeredSet.size,
     eligible: (sp || []).length,
     video: s.state === "playing" || s.state === "reveal" ? video : null,
     upNext,

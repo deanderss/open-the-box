@@ -98,10 +98,14 @@ function HostInner({ groupId }: { groupId: string }) {
     }
     setBusy(true);
     setActionErr(null);
+    // next/skip/reveal carry the index the host screen was looking at, so a double-tap (or two moderators on
+    // the same screen) can't advance past a video twice: the server rejects it if the game already moved on.
+    const payload: Record<string, unknown> = { sessionId, action, ...extra };
+    if (s && (action === "next" || action === "skip" || action === "reveal")) payload.expectIndex = s.index;
     const res = await fetch("/api/session/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, action, ...extra }),
+      body: JSON.stringify(payload),
     });
     const d = await res.json();
     if (!res.ok) setActionErr(d.error);

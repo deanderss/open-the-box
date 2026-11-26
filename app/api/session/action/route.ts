@@ -4,13 +4,19 @@ import { json } from "@/lib/util";
 import { getSession, beginSession, doReveal, nextVideo, skipVideo, endSession, finishSession, pauseSession, resumeSession, broadcast } from "@/lib/game";
 
 export const POST = handle(async (req) => {
-  const { sessionId, action, playerId } = await body<{ sessionId?: string; action?: string; playerId?: string }>(req);
+  const { sessionId, action, playerId, expectIndex } = await body<{ sessionId?: string; action?: string; playerId?: string; expectIndex?: number }>(req);
   const s = sessionId ? await getSession(sessionId) : null;
   if (!s) throw new HttpError(404, "Session not found");
   await requireGroupMod(s.group_id);
   if (s.ended_at && action !== "end") throw new HttpError(400, "This session has ended");
   // While paused, only resume / end / pause / kick make sense
   if (s.paused_at && !["resume", "end", "finish", "pause", "kick"].includes(action || "")) throw new HttpError(409, "The game is paused. Resume it first.");
+  // A double-tap (or two moderators on the same screen) can fire "next"/"skip"/"reveal" twice for the same
+  // video. The client sends the index it was looking at; if the session has already moved on, say so plainly
+  // instead of quietly re-running the action against whatever is now current.
+  if (typeof expectIndex === "number" && ["next", "skip", "reveal"].includes(action || "") && expectIndex !== s.current_index) {
+    throw new HttpError(409, "Someone already moved on — refreshing");
+  }
   let r: { error?: string; session?: unknown } = {};
   switch (action) {
     case "begin":
