@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import { useGameState, useCountdown } from "@/components/useGameState";
+import { useWakeLock } from "@/components/useWakeLock";
 import { useSeat, type Seat, type SeatResult } from "@/components/useSeat";
 import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
@@ -16,16 +17,28 @@ function JoinInner() {
   const [roster, setRoster] = useState<{ id: string; name: string; color: string; taken: boolean }[] | null>(null);
   const [group, setGroup] = useState<{ name: string; color: string; emoji: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [kickedMsg, setKickedMsg] = useState<string | null>(null);
+  const [looking, setLooking] = useState(false);
   const { seat, pick, clear, submitAnswer } = useSeat(confirmedCode);
 
   async function lookup(c: string) {
     setErr(null);
-    const res = await fetch("/api/session/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c }) });
-    const d = await res.json();
-    if (!res.ok) return setErr(d.error);
-    setConfirmedCode(c);
-    setRoster(d.roster);
-    setGroup(d.group);
+    setLooking(true);
+    try {
+      const res = await fetch("/api/session/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErr(d.error || "Something went wrong");
+        return;
+      }
+      setConfirmedCode(c);
+      setRoster(d.roster);
+      setGroup(d.group);
+    } catch {
+      setErr("Couldn't reach the server — check your connection and try again");
+    } finally {
+      setLooking(false);
+    }
   }
 
   useEffect(() => {
@@ -39,6 +52,8 @@ function JoinInner() {
     if (!r.ok) {
       setErr(r.error);
       lookup(confirmedCode!);
+    } else {
+      setKickedMsg(null);
     }
   }
 
@@ -46,6 +61,7 @@ function JoinInner() {
   // render of this page (e.g. while a stray `lookup()` from a previous pick is still resolving).
   const handleKicked = useCallback(() => {
     clear();
+    setKickedMsg("The host removed you — pick your name again.");
     if (confirmedCode) lookup(confirmedCode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clear, confirmedCode]);
@@ -53,7 +69,7 @@ function JoinInner() {
   if (seat && confirmedCode) return <Controller code={confirmedCode} seat={seat} submitAnswer={submitAnswer} onKicked={handleKicked} />;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 py-8">
+    <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
       <h1 className="title text-center text-4xl text-sunny">📦 Open the Box</h1>
       {!confirmedCode ? (
         <form
@@ -74,8 +90,8 @@ function JoinInner() {
             placeholder="ABCD"
           />
           {err && <p className="text-center text-[#FFB3B3]">{err}</p>}
-          <button className="btn btn-yellow w-full text-2xl" disabled={code.length !== 4}>
-            Join
+          <button className="btn btn-yellow w-full text-2xl" disabled={code.length !== 4 || looking}>
+            {looking ? "Joining…" : "Join"}
           </button>
         </form>
       ) : (
@@ -85,7 +101,9 @@ function JoinInner() {
             {group?.name}
           </p>
           <p className="mb-4 mt-2 text-center text-white/70">Tap your name</p>
+          {kickedMsg && <p className="mb-3 text-center text-sm text-[#FFD23F]">{kickedMsg}</p>}
           {err && <p className="mb-3 text-center text-sm text-[#FFB3B3]">{err}</p>}
+          {looking && <p className="mb-3 text-center text-sm text-white/60">Joining…</p>}
           <div className="grid grid-cols-2 gap-3">
             {(roster || []).map((p) => (
               <button
@@ -125,6 +143,19 @@ function Controller({
   const [err, setErr] = useState<string | null>(null);
   const s = state?.session;
   const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing");
+  useWakeLock(!!s && s.state !== "finished");
+
+  // "You rated 7, guessed Sam": written once lock-in succeeds, read back here so it survives a refresh (the
+  // answer is final either way, so there's nothing left to redo even if the page reloads).
+  const [lockSummary, setLockSummary] = useState<{ rating: number; guessedName: string | null } | null>(null);
+  useEffect(() => {
+    if (typeof sessionStorage === "undefined" || s?.index == null) {
+      setLockSummary(null);
+      return;
+    }
+    const raw = sessionStorage.getItem(`otb-lockin-${code}-${s.index}`);
+    setLockSummary(raw ? JSON.parse(raw) : null);
+  }, [code, s?.index]);
 
   useEffect(() => {
     setRating(null);
@@ -162,8 +193,15 @@ function Controller({
     setBusy(true);
     setErr(null);
     const r = await submitAnswer(rating, guess);
-    if (!r.ok) setErr(r.error);
-    if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(60);
+    if (!r.ok) {
+      setErr(r.error);
+    } else if (rating != null) {
+      if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(60);
+      const guessedName = guess ? (state?.roster.find((p) => p.id === guess)?.name ?? null) : null;
+      const summary = { rating, guessedName };
+      setLockSummary(summary);
+      if (typeof sessionStorage !== "undefined" && s) sessionStorage.setItem(`otb-lockin-${code}-${s.index}`, JSON.stringify(summary));
+    }
     await refresh();
     setBusy(false);
   }
@@ -171,7 +209,7 @@ function Controller({
   const others = state.roster.filter((p) => p.id !== seat.playerId);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col px-4 py-4">
+    <main className="mx-auto flex min-h-screen max-w-md flex-col px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <header className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Avatar name={me?.name} color={me?.color} size={40} />
@@ -200,6 +238,12 @@ function Controller({
 
       {!s.paused && s.state === "playing" && me && (me.answered ? (
         <Panel emoji="🔒" title="Locked in!">
+          {lockSummary && (
+            <>
+              You rated it {lockSummary.rating}
+              {lockSummary.guessedName ? `, guessed ${lockSummary.guessedName}` : ""}.{" "}
+            </>
+          )}
           Waiting for everyone else… ({state.answered}/{state.eligible})
         </Panel>
       ) : (
@@ -242,7 +286,12 @@ function Controller({
             </div>
           </div>
           {err && <p className="text-center text-[#FFB3B3]">{err}</p>}
-          <button className="btn btn-yellow sticky bottom-3 w-full text-2xl" disabled={busy || !rating || (!guess && !me.isMine)} onClick={lockIn}>
+          <button
+            className="btn btn-yellow sticky w-full text-2xl"
+            style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+            disabled={busy || !rating || (!guess && !me.isMine)}
+            onClick={lockIn}
+          >
             {busy ? "…" : "Lock in 🔒"}
           </button>
         </div>

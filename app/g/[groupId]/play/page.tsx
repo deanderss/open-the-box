@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import GrandReveal from "@/components/GrandReveal";
 import { useGameState, useCountdown } from "@/components/useGameState";
+import { useWakeLock } from "@/components/useWakeLock";
 import { enterNativeFullscreen, exitNativeFullscreen, scrollToTop } from "@/lib/fullscreen";
 import HostHeader from "@/components/host/HostHeader";
 import LobbyView from "@/components/host/LobbyView";
@@ -25,6 +26,7 @@ function HostInner({ groupId }: { groupId: string }) {
 
   const s = state?.session;
   const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing" && !s?.paused);
+  useWakeLock(!!s && s.state !== "finished");
 
   // Fullscreen while a video is playing; back to the window view at the reveal (or when paused).
   const fullscreen = !!(s && s.state === "playing" && !s.paused && state?.video && wantFull);

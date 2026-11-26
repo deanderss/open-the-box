@@ -11,7 +11,7 @@ import type { GameState } from "./useGameState";
  *
  * Hidden whenever the video is full screen (the caller only renders this when `!fullscreen`).
  */
-export default function HostPlayerPanel({ state }: { state: GameState }) {
+export default function HostPlayerPanel({ state, onStatus }: { state: GameState; onStatus?: (status: { visible: boolean; answered: boolean }) => void }) {
   const code = state.session.code;
   const { seat, checked, pick, clear, submitAnswer } = useSeat(code);
   const [err, setErr] = useState<string | null>(null);
@@ -19,6 +19,14 @@ export default function HostPlayerPanel({ state }: { state: GameState }) {
   const [guess, setGuess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
+
+  // Lets a caller (the fullscreen "Answer" button) know, without owning any of this seat/answer state
+  // itself, whether there's something to show right now.
+  useEffect(() => {
+    if (!onStatus) return;
+    const isAnswered = !!seat && (locked || !!state.players.find((p) => p.id === seat.playerId)?.answered);
+    onStatus({ visible: !!seat && checked && state.session.state === "playing" && !isAnswered, answered: isAnswered });
+  }, [onStatus, seat, checked, locked, state.players, state.session.state]);
 
   // If the moderator's seat gets freed up server-side (e.g. kicked from the lobby), drop it here too.
   useEffect(() => {

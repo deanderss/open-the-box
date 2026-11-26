@@ -1,4 +1,5 @@
 "use client";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
@@ -39,6 +40,24 @@ export default function StageView({
   finishGame: () => void;
 }) {
   const s = state.session;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [answerOpen, setAnswerOpen] = useState(false);
+  const [answerStatus, setAnswerStatus] = useState({ visible: false, answered: false });
+  // Stable reference: HostPlayerPanel re-reports its status on every real state change, and a fresh
+  // callback identity each render would make that effect (and this one) re-fire forever.
+  const handleAnswerStatus = useCallback((next: { visible: boolean; answered: boolean }) => {
+    setAnswerStatus((prev) => (prev.visible === next.visible && prev.answered === next.answered ? prev : next));
+  }, []);
+  // Nothing left to do in the sheet once locked in — close it so it's not just sitting over the video.
+  useEffect(() => {
+    if (answerStatus.answered) setAnswerOpen(false);
+  }, [answerStatus.answered]);
+  // Collapse the "More" menu (and close the sheet) whenever we leave the moment they apply to.
+  useEffect(() => {
+    setMoreOpen(false);
+    setAnswerOpen(false);
+  }, [s.index, s.state]);
+
   if (!state.video) return null;
   return (
     <section className="grid flex-1 gap-6 px-6 pb-8 lg:grid-cols-[1fr_minmax(340px,420px)]">
@@ -64,7 +83,7 @@ export default function StageView({
                   }}
                 />
               </div>
-              <div className="flex items-center justify-between gap-2 px-3 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
                 <div className="flex items-center gap-3 drop-shadow">
                   <Countdown ms={remaining} total={s.windowSeconds} size={40} />
                   <span className="font-display text-base">
@@ -72,19 +91,66 @@ export default function StageView({
                     <span className="text-white/70"> / {state.eligible} locked in</span>
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
                   <button className="btn btn-pink btn-sm" disabled={busy} onClick={() => act("reveal")}>
                     Reveal now
                   </button>
-                  <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
-                    Skip ⏭
-                  </button>
-                  <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." onClick={() => setReloadN((n) => n + 1)}>
-                    ↻
-                  </button>
-                  <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={onPauseExit}>
-                    ⏸
-                  </button>
+                  {answerStatus.visible && (
+                    <button className="btn btn-yellow btn-sm" onClick={() => setAnswerOpen(true)}>
+                      📝 Answer
+                    </button>
+                  )}
+                  {/* Skip / Reload / Pause: full buttons from sm up, folded into "More" below that so the
+                      bar doesn't wrap onto three lines on a phone. */}
+                  <div className="hidden items-center gap-1.5 sm:flex">
+                    <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+                      Skip ⏭
+                    </button>
+                    <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." onClick={() => setReloadN((n) => n + 1)}>
+                      ↻
+                    </button>
+                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={onPauseExit}>
+                      ⏸
+                    </button>
+                  </div>
+                  <div className="relative sm:hidden">
+                    <button className="btn btn-ghost btn-sm" aria-haspopup="true" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
+                      ⋯ More
+                    </button>
+                    {moreOpen && (
+                      <div className="absolute right-0 top-full z-20 mt-1 flex flex-col gap-1 rounded-xl bg-night p-2 shadow-chunky">
+                        <button
+                          className="btn btn-ghost btn-sm whitespace-nowrap"
+                          disabled={busy}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            act("skip");
+                          }}
+                        >
+                          Skip ⏭
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm whitespace-nowrap"
+                          onClick={() => {
+                            setMoreOpen(false);
+                            setReloadN((n) => n + 1);
+                          }}
+                        >
+                          ↻ Reload
+                        </button>
+                        <button
+                          className="btn btn-sky btn-sm whitespace-nowrap"
+                          disabled={busy}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            onPauseExit();
+                          }}
+                        >
+                          ⏸ Pause
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
                     ⤡ Exit
                   </button>
@@ -109,6 +175,24 @@ export default function StageView({
             </button>
           </div>
         )}
+        {/* Fullscreen "Answer" bottom sheet: same HostPlayerPanel, just presented over the video instead of
+            in the (hidden, while fullscreen) right column. Kept mounted-but-hidden rather than unmounted so
+            its own seat check doesn't re-run every time the sheet opens. */}
+        {fullscreen && (
+          <div
+            className={
+              answerOpen
+                ? "fixed inset-x-0 bottom-0 z-40 max-h-[75vh] overflow-y-auto rounded-t-3xl bg-night p-4 shadow-chunky"
+                : "hidden"
+            }
+            style={answerOpen ? { paddingBottom: "max(1rem, env(safe-area-inset-bottom))" } : undefined}
+          >
+            <button className="mb-2 ml-auto block text-sm text-white/60 underline" onClick={() => setAnswerOpen(false)}>
+              Close
+            </button>
+            <HostPlayerPanel state={state} onStatus={handleAnswerStatus} />
+          </div>
+        )}
       </div>
       <div className="flex flex-col gap-4">
         {s.state === "playing" ? (
@@ -127,14 +211,6 @@ export default function StageView({
                 </motion.div>
               ))}
             </div>
-            <div className="mt-2 flex w-full gap-2">
-              <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>
-                Reveal now
-              </button>
-              <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
-                Skip ⏭
-              </button>
-            </div>
           </div>
         ) : grandOpen && grandFor === s.index ? (
           <div className="card py-10 text-center">
@@ -143,8 +219,27 @@ export default function StageView({
         ) : (
           <RevealPanel state={state} instant={grandFor === s.index} />
         )}
+        {/* Action buttons: inline in the flow from lg up (there's room beside the video); below that, a
+            sticky bar pinned to the bottom of the screen so they're always one tap away without scrolling
+            past scores or the guess list. */}
+        {s.state === "playing" && (
+          <div
+            className="sticky bottom-0 z-20 -mx-6 flex gap-2 bg-night/95 px-6 py-3 backdrop-blur lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0 lg:backdrop-blur-0"
+            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+          >
+            <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>
+              Reveal now
+            </button>
+            <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+              Skip ⏭
+            </button>
+          </div>
+        )}
         {s.state === "reveal" && (
-          <div className="flex flex-col gap-2">
+          <div
+            className="sticky bottom-0 z-20 -mx-6 flex flex-col gap-2 bg-night/95 px-6 py-3 backdrop-blur lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0 lg:backdrop-blur-0"
+            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+          >
             {finishPending && <p className="text-center text-sm text-white/70">Wrapping up after this video. Hit Finished when you&apos;re ready.</p>}
             {s.index + 1 < s.total && (
               <button className={`btn w-full text-2xl ${finishPending ? "btn-ghost" : "btn-yellow"}`} disabled={busy} onClick={() => act("next")}>
@@ -161,7 +256,7 @@ export default function StageView({
             </button>
           </div>
         )}
-        {!fullscreen && <HostPlayerPanel state={state} />}
+        {!fullscreen && <HostPlayerPanel state={state} onStatus={handleAnswerStatus} />}
         <MiniScores scores={state.scores} />
       </div>
     </section>

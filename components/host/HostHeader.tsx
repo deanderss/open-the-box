@@ -21,19 +21,22 @@ export default function HostHeader({
   onFinish: () => void;
 }) {
   const s = state.session;
+  const started = s.state !== "lobby" && s.state !== "finished";
   return (
-    <header className="flex items-center justify-between gap-4 px-6 py-3">
+    <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-3">
       <Link href={`/g/${groupId}`} className="title flex items-center gap-2 text-xl text-sunny">
         <span className="text-2xl">{state.group?.emoji}</span> {state.group?.name}
       </Link>
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         {reconnecting && (
           <span className="flex items-center gap-1.5 rounded-full bg-[#FFB84D]/20 px-3 py-1 text-sm text-[#FFB84D]" role="status">
             <span className="h-2 w-2 animate-pulse rounded-full bg-[#FFB84D]" aria-hidden /> Reconnecting…
           </span>
         )}
         {s.state !== "finished" && (
-          <div className="rounded-2xl bg-black/30 px-4 py-2 text-center">
+          // Once the game is under way the join code matters a lot less (everyone who's going to has
+          // already joined), so on small screens we give that space back to the Reveal/Skip/Pause controls.
+          <div className={`rounded-2xl bg-black/30 px-4 py-2 text-center ${started ? "hidden md:block" : ""}`}>
             <span className="text-sm text-white/60">Join at </span>
             <span className="font-mono text-white/90">{origin.replace(/^https?:\/\//, "")}/join</span>
             <span className="ml-3 font-display text-2xl tracking-[0.3em] text-sunny">{s.code}</span>
