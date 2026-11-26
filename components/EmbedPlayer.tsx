@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { layoutFor, place } from "@/lib/immersive";
 import { openInApp } from "@/lib/openInApp";
+import { scrollToTop } from "@/lib/fullscreen";
 
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
@@ -376,13 +377,13 @@ export default function EmbedPlayer({
   // inside a cross-origin iframe get misplaced by however far the page is scrolled underneath, which is why play
   // buttons sometimes did nothing until a refresh.
   useIsoLayoutEffect(() => {
-    if (fullscreen) window.scrollTo(0, 0);
+    if (fullscreen) scrollToTop();
   }, [fullscreen, embedUrl]);
 
   // lock page scroll / rubber-banding behind the stage
   useEffect(() => {
     if (!fullscreen) return;
-    window.scrollTo(0, 0);
+    scrollToTop();
     const b = document.body;
     const h = document.documentElement;
     const prev = {

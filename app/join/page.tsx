@@ -1,15 +1,13 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import { useGameState, useCountdown } from "@/components/useGameState";
+import { useSeat, type Seat, type SeatResult } from "@/components/useSeat";
 import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
-
-type Seat = { playerId: string; token: string };
-const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
 
 function JoinInner() {
   const initial = (useSearchParams().get("code") || "").toUpperCase();
@@ -17,8 +15,8 @@ function JoinInner() {
   const [confirmedCode, setConfirmedCode] = useState<string | null>(null);
   const [roster, setRoster] = useState<{ id: string; name: string; color: string; taken: boolean }[] | null>(null);
   const [group, setGroup] = useState<{ name: string; color: string; emoji: string } | null>(null);
-  const [seat, setSeat] = useState<Seat | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const { seat, pick, clear, submitAnswer } = useSeat(confirmedCode);
 
   async function lookup(c: string) {
     setErr(null);
@@ -28,17 +26,6 @@ function JoinInner() {
     setConfirmedCode(c);
     setRoster(d.roster);
     setGroup(d.group);
-    const saved = localStorage.getItem(seatKey(c));
-    if (saved) {
-      try {
-        const st = JSON.parse(saved) as Seat;
-        const r2 = await fetch("/api/session/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: c, ...st }) });
-        if (r2.ok) setSeat(st);
-        else localStorage.removeItem(seatKey(c));
-      } catch {
-        localStorage.removeItem(seatKey(c));
-      }
-    }
   }
 
   useEffect(() => {
@@ -46,32 +33,24 @@ function JoinInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function pick(playerId: string) {
+  async function handlePick(playerId: string) {
     setErr(null);
-    const res = await fetch("/api/session/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: confirmedCode, playerId }) });
-    const d = await res.json();
-    if (!res.ok) {
-      setErr(d.error);
+    const r = await pick(playerId);
+    if (!r.ok) {
+      setErr(r.error);
       lookup(confirmedCode!);
-      return;
     }
-    const st = { playerId, token: d.token };
-    localStorage.setItem(seatKey(confirmedCode!), JSON.stringify(st));
-    setSeat(st);
   }
 
-  if (seat && confirmedCode)
-    return (
-      <Controller
-        code={confirmedCode}
-        seat={seat}
-        onKicked={() => {
-          localStorage.removeItem(seatKey(confirmedCode));
-          setSeat(null);
-          lookup(confirmedCode);
-        }}
-      />
-    );
+  // Memoized so Controller's "was I kicked?" effect doesn't tear down and re-subscribe on every unrelated
+  // render of this page (e.g. while a stray `lookup()` from a previous pick is still resolving).
+  const handleKicked = useCallback(() => {
+    clear();
+    if (confirmedCode) lookup(confirmedCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clear, confirmedCode]);
+
+  if (seat && confirmedCode) return <Controller code={confirmedCode} seat={seat} submitAnswer={submitAnswer} onKicked={handleKicked} />;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 py-8">
@@ -112,7 +91,7 @@ function JoinInner() {
               <button
                 key={p.id}
                 disabled={p.taken}
-                onClick={() => pick(p.id)}
+                onClick={() => handlePick(p.id)}
                 className="flex items-center gap-2 rounded-2xl bg-black/30 p-3 text-left font-semibold active:scale-95 disabled:opacity-30"
               >
                 <Avatar name={p.name} color={p.color} size={36} /> {p.name}
@@ -128,7 +107,17 @@ function JoinInner() {
   );
 }
 
-function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKicked: () => void }) {
+function Controller({
+  code,
+  seat,
+  submitAnswer,
+  onKicked,
+}: {
+  code: string;
+  seat: Seat;
+  submitAnswer: (rating: number | null, guessId: string | null) => Promise<SeatResult>;
+  onKicked: () => void;
+}) {
   const { state, refresh, fetchedAt } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);
@@ -172,13 +161,8 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
   async function lockIn() {
     setBusy(true);
     setErr(null);
-    const res = await fetch("/api/session/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, playerId: seat.playerId, token: seat.token, rating, guessId: guess }),
-    });
-    const d = await res.json();
-    if (!res.ok) setErr(d.error);
+    const r = await submitAnswer(rating, guess);
+    if (!r.ok) setErr(r.error);
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(60);
     await refresh();
     setBusy(false);

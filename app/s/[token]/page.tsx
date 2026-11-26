@@ -116,6 +116,10 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
   const [scanMsg, setScanMsg] = useState(SCANNING[0]);
   const [taunt] = useState(() => pick(TAUNTS.slice(1)));
   const storeKey = `otb-submitter-${params.token}`;
+  const verdictTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (verdictTimer.current) clearTimeout(verdictTimer.current);
+  }, []);
 
   useEffect(() => {
     fetch(`/api/submit?token=${encodeURIComponent(params.token)}`)
@@ -154,7 +158,8 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
     setVerdictLine(pick(VERDICTS[v].lines));
     setVerdictSub(pick(VERDICTS[v].sub));
     setShowVerdict(false);
-    setTimeout(() => {
+    if (verdictTimer.current) clearTimeout(verdictTimer.current); // the "try again" button can call this again before the first one fires
+    verdictTimer.current = setTimeout(() => {
       setShowVerdict(true);
       if (v === "rock") confetti({ particleCount: 180, spread: 100, origin: { y: 0.35 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
       if (v === "stink") stinkRain();

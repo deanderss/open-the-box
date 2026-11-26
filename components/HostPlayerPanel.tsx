@@ -1,11 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Avatar from "./Avatar";
+import { useSeat } from "./useSeat";
 import type { GameState } from "./useGameState";
-
-type Seat = { playerId: string; token: string };
-/** Same localStorage key a phone uses for this room code, so the moderator's seat is just a normal player seat. */
-const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
 
 /**
  * Lets the moderator join as a player and play along from the host screen itself — pick a name in the lobby, then
@@ -16,57 +13,18 @@ const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
  */
 export default function HostPlayerPanel({ state }: { state: GameState }) {
   const code = state.session.code;
-  const [seat, setSeat] = useState<Seat | null>(null);
-  const [checked, setChecked] = useState(false);
+  const { seat, checked, pick, clear, submitAnswer } = useSeat(code);
   const [err, setErr] = useState<string | null>(null);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
 
-  // Load and verify any saved seat for this room code (same check a phone does on load).
-  useEffect(() => {
-    let cancelled = false;
-    setChecked(false);
-    const saved = localStorage.getItem(seatKey(code));
-    if (!saved) {
-      setSeat(null);
-      setChecked(true);
-      return;
-    }
-    (async () => {
-      try {
-        const st = JSON.parse(saved) as Seat;
-        const res = await fetch("/api/session/join", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, ...st }),
-        });
-        if (cancelled) return;
-        if (res.ok) setSeat(st);
-        else {
-          localStorage.removeItem(seatKey(code));
-          setSeat(null);
-        }
-      } catch {
-        /* transient network hiccup; leave the seat alone and try again next mount */
-      } finally {
-        if (!cancelled) setChecked(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
-
   // If the moderator's seat gets freed up server-side (e.g. kicked from the lobby), drop it here too.
   useEffect(() => {
     if (!seat || !checked) return;
-    if (!state.players.some((p) => p.id === seat.playerId)) {
-      localStorage.removeItem(seatKey(code));
-      setSeat(null);
-    }
-  }, [state.players, seat, checked, code]);
+    if (!state.players.some((p) => p.id === seat.playerId)) clear();
+  }, [state.players, seat, checked, clear]);
 
   // Fresh choices for every new video.
   useEffect(() => {
@@ -76,34 +34,18 @@ export default function HostPlayerPanel({ state }: { state: GameState }) {
     setErr(null);
   }, [state.session.index]);
 
-  async function pick(playerId: string) {
+  async function handlePick(playerId: string) {
     setErr(null);
-    const res = await fetch("/api/session/join", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, playerId }),
-    });
-    const d = await res.json();
-    if (!res.ok) {
-      setErr(d.error);
-      return;
-    }
-    const st = { playerId, token: d.token as string };
-    localStorage.setItem(seatKey(code), JSON.stringify(st));
-    setSeat(st);
+    const r = await pick(playerId);
+    if (!r.ok) setErr(r.error);
   }
 
   async function lockIn() {
     if (!seat || rating == null || !guess) return;
     setBusy(true);
     setErr(null);
-    const res = await fetch("/api/session/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, playerId: seat.playerId, token: seat.token, rating, guessId: guess }),
-    });
-    const d = await res.json();
-    if (!res.ok) setErr(d.error);
+    const r = await submitAnswer(rating, guess);
+    if (!r.ok) setErr(r.error);
     else setLocked(true);
     setBusy(false);
   }
@@ -123,7 +65,7 @@ export default function HostPlayerPanel({ state }: { state: GameState }) {
           {available.map((p) => (
             <button
               key={p.id}
-              onClick={() => pick(p.id)}
+              onClick={() => handlePick(p.id)}
               className="flex items-center gap-2 rounded-2xl bg-black/30 p-2 text-left font-semibold active:scale-95"
             >
               <Avatar name={p.name} color={p.color} size={28} /> <span className="truncate">{p.name}</span>
