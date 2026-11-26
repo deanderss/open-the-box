@@ -36,6 +36,8 @@ type Media = {
   aspect?: number;
   /** the site won't play this video inside other apps: show an "open it there" panel instead of a black frame */
   blocked?: "restricted" | "gone";
+  /** Instagram only: a direct, CORS-enabled MP4 link (lib/igDirect.ts) — played in a native <video> instead of the embed */
+  directUrl?: string;
 };
 
 /** Which videos can be loaded invisibly ahead of time. Facebook is left out: its player can't be told to start later. */
@@ -63,16 +65,29 @@ function youtubePlay(frame: HTMLIFrameElement | null) {
 }
 
 /**
- * A personal video uploaded from someone's camera roll: a plain <video>, so unlike the social embeds nothing can be
- * restricted, there is no cross-origin chrome to crop away, and it can fill the stage. Tries to start with sound
- * (the host has just tapped something, so browsers usually allow it); if the browser refuses it starts muted and
- * offers a "Tap for sound" button. Loops, like a reel. While `active` is false it only buffers (preloading).
+ * A video played directly from a file rather than through a third-party iframe: a personal upload from
+ * someone's camera roll, or (for Instagram) a direct link resolved by lib/igDirect.ts. Either way nothing can
+ * be "restricted", there's no cross-origin chrome to crop away, and it can fill the stage. Tries to start with
+ * sound (the host has just tapped something, so browsers usually allow it); if the browser refuses it starts
+ * muted and offers a "Tap for sound" button. Loops, like a reel. While `active` is false it only buffers
+ * (preloading). If the file never becomes playable (bad/expired link, decode failure, or a stall) `onError`
+ * fires once, so a resolved-but-dead Instagram link can fall back to the embed instead of a black screen —
+ * uploads have nowhere else to fall back to, so they simply don't pass one.
  */
-function UploadVideo({ src, active }: { src: string; active: boolean }) {
+function NativeVideo({ src, active, onError }: { src: string; active: boolean; onError?: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [ready, setReady] = useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [cover, setCover] = useState(false);
+  const firedRef = useRef(false);
+  const fail = useCallback(() => {
+    if (firedRef.current) return;
+    firedRef.current = true;
+    onError?.();
+  }, [onError]);
+  useEffect(() => {
+    firedRef.current = false;
+  }, [src]);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
@@ -83,9 +98,16 @@ function UploadVideo({ src, active }: { src: string; active: boolean }) {
     v.muted = false;
     v.play().catch(() => {
       v.muted = true;
-      v.play().then(() => setNeedsTap(true)).catch(() => {});
+      v.play().then(() => setNeedsTap(true)).catch(fail);
     });
-  }, [src, active]);
+  }, [src, active, fail]);
+  // A dead/expired link, or a connection that never progresses, doesn't fire any event at all: give up and
+  // let the caller fall back after a few seconds rather than sit on a black screen forever.
+  useEffect(() => {
+    if (!active || ready) return;
+    const t = setTimeout(fail, 9000);
+    return () => clearTimeout(t);
+  }, [active, ready, fail, src]);
   return (
     <>
       <video
@@ -96,6 +118,7 @@ function UploadVideo({ src, active }: { src: string; active: boolean }) {
         controls
         preload="auto"
         onCanPlay={() => setReady(true)}
+        onError={fail}
         onLoadedMetadata={(e) => {
           // fill the screen when the video is close to the stage's shape, otherwise show all of it
           const v = e.currentTarget;
@@ -149,11 +172,17 @@ function Slot({
   reloadSignal: number;
   onSettled: (embedUrl: string) => void;
 }) {
-  const { embedUrl, platform, sourceUrl, aspect, blocked } = media;
+  const { embedUrl, platform, sourceUrl, aspect, blocked, directUrl } = media;
   const site = SITE[platform] ?? "the site";
   const [forced, setForced] = useState(false); // "try it here anyway"
   const showBlocked = !!blocked && !forced;
-  const isUpload = platform === "upload"; // plays in a native <video>, no iframe, no slow-load timers
+  const isUpload = platform === "upload";
+  // A resolved Instagram direct link plays natively too, unless it already failed once at runtime (expired,
+  // or the CDN refused it) — then it falls back to the plain iframe below, same as a video with no direct link.
+  const [directFailed, setDirectFailed] = useState(false);
+  const useDirect = platform === "instagram" && !!directUrl && !directFailed;
+  const isNative = isUpload || useDirect; // plays in a native <video>, no iframe, no slow-load timers
+  const nativeSrc = isUpload ? embedUrl : directUrl;
   const frameRef = useRef<HTMLIFrameElement>(null);
 
   // A slot that was loaded invisibly keeps its non-autoplaying embed; YouTube is then told to play when shown.
@@ -185,7 +214,7 @@ function Slot({
   }, [reloads]);
   useEffect(() => {
     setSlow(false);
-    if (!active || showBlocked || isUpload || loaded) return;
+    if (!active || showBlocked || isNative || loaded) return;
     const slowT = setTimeout(() => setSlow(true), 10000);
     const retryT = setTimeout(() => {
       if (!loadedRef.current && reloads === 0) setReloads((n) => n + 1);
@@ -194,7 +223,7 @@ function Slot({
       clearTimeout(slowT);
       clearTimeout(retryT);
     };
-  }, [active, showBlocked, isUpload, loaded, reloads]);
+  }, [active, showBlocked, isNative, loaded, reloads]);
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => setSettled(true), 1800);
@@ -214,7 +243,7 @@ function Slot({
 
   const layout = useMemo(() => layoutFor(platform, embedUrl, aspect), [platform, embedUrl, aspect]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
-  const immersive = fullscreen && placed && !showBlocked && !isUpload;
+  const immersive = fullscreen && placed && !showBlocked && !isNative;
 
   return (
     <div
@@ -258,8 +287,8 @@ function Slot({
           </div>
         </div>
       )}
-      {isUpload && <UploadVideo src={embedUrl} active={active} />}
-      {!showBlocked && !isUpload && (
+      {isNative && <NativeVideo src={nativeSrc!} active={active} onError={useDirect ? () => setDirectFailed(true) : undefined} />}
+      {!showBlocked && !isNative && (
         <iframe
           ref={frameRef}
           key={reloads}
@@ -288,7 +317,7 @@ function Slot({
           referrerPolicy="strict-origin-when-cross-origin"
         />
       )}
-      {active && !showBlocked && !isUpload && !settled && (
+      {active && !showBlocked && !isNative && !settled && (
         <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
           <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
@@ -336,6 +365,7 @@ function EmbedPlayer({
   sourceUrl,
   aspect,
   blocked,
+  directUrl,
   next,
   className = "",
   fullscreen = false,
@@ -347,6 +377,8 @@ function EmbedPlayer({
   sourceUrl?: string;
   aspect?: number;
   blocked?: "restricted" | "gone";
+  /** Instagram only: a direct, CORS-enabled MP4 link (lib/igDirect.ts) — played natively instead of the embed */
+  directUrl?: string;
   /** the video that comes after this one: loaded invisibly so it is ready the moment we get there */
   next?: Media | null;
   className?: string;
@@ -355,9 +387,13 @@ function EmbedPlayer({
   /** bump to reload the visible video's iframe (the "Reload video" button) */
   reloadKey?: number;
 }) {
-  const current = useMemo<Media>(() => ({ embedUrl, platform, sourceUrl, aspect, blocked }), [embedUrl, platform, sourceUrl, aspect, blocked]);
+  const current = useMemo<Media>(
+    () => ({ embedUrl, platform, sourceUrl, aspect, blocked, directUrl }),
+    [embedUrl, platform, sourceUrl, aspect, blocked, directUrl]
+  );
   const site = SITE[platform] ?? "the site";
   const isUpload = platform === "upload";
+  const isNative = isUpload || (platform === "instagram" && !!directUrl);
 
   const [settledUrls, setSettledUrls] = useState<ReadonlySet<string>>(() => new Set());
   const onSettled = useCallback((url: string) => setSettledUrls((s) => (s.has(url) ? s : new Set(s).add(url))), []);
@@ -371,7 +407,7 @@ function EmbedPlayer({
     const t = setTimeout(() => setWarmFor(embedUrl), 2500);
     return () => clearTimeout(t);
   }, [embedUrl]);
-  const preloadNow = !!ahead && warmFor === embedUrl && (isUpload || !!blocked || settledUrls.has(embedUrl));
+  const preloadNow = !!ahead && warmFor === embedUrl && (isNative || !!blocked || settledUrls.has(embedUrl));
 
   const slots: Media[] = ahead && preloadNow ? [current, ahead] : [current];
 
@@ -443,7 +479,7 @@ function EmbedPlayer({
         </div>
       )}
 
-      {sourceUrl && !fullscreen && !blocked && !isUpload && (
+      {sourceUrl && !fullscreen && !blocked && !isNative && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/70 underline hover:text-white/80">
           Not loading? Open on {site} ↗
         </a>

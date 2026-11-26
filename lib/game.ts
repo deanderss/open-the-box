@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
 import { checkMedia, type Media } from "./playable";
+import { resolveInstagramVideo } from "./igDirect";
 import { purgeUpload } from "./uploads";
 import { SENDER_BONUS } from "./points";
 import { HttpError } from "./api";
@@ -275,18 +276,47 @@ type VideoRow = {
   status: string;
   playability?: string | null;
   aspect?: number | null;
+  direct_url?: string | null;
+  direct_url_expires?: string | null;
 };
 
 /**
- * Host-only per-video extras: the restricted/gone flag and, for Instagram, the clip's shape for the
- * fullscreen crop. Uses the value saved on the row at submit time when there is one; only reaches out to the
- * platform live for older rows that predate that column, and then writes the result back so every poll after
- * this one skips the network call entirely.
+ * Host-only per-video extras: the restricted/gone flag, the clip's shape for the fullscreen crop, and (for
+ * Instagram) a direct MP4 link for native playback (see lib/igDirect.ts). Uses whatever is already saved on
+ * the row when it's still valid; only reaches out to the platform live when it isn't, writing the result back
+ * so every poll after this one — for as long as it stays valid — skips the network call entirely.
  */
-async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "restricted" | "gone" }> {
+async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string }> {
+  const out: { aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string } = {};
+  if (v.aspect) out.aspect = v.aspect;
+
+  // Instagram: a direct, CORS-enabled link means native <video> playback instead of the cross-origin embed —
+  // strictly better whenever it's available, whatever the saved playability says. The link is signed and
+  // expires after roughly a day, so it's cached on the row and re-resolved only once that runs out.
+  if (v.platform === "instagram") {
+    const expires = v.direct_url_expires ? new Date(v.direct_url_expires).getTime() : 0;
+    if (v.direct_url && expires > Date.now()) {
+      out.directUrl = v.direct_url;
+      return out;
+    }
+    const direct = await resolveInstagramVideo(v.embed_url, v.source_url).catch(() => null);
+    if (direct) {
+      out.directUrl = direct.url;
+      db()
+        .from("videos")
+        .update({ direct_url: direct.url, direct_url_expires: new Date(direct.expiresAt).toISOString(), playability: "ok" })
+        .eq("id", v.id)
+        .then(
+          () => {},
+          () => {}
+        );
+      return out;
+    }
+    // No direct link (restricted with no working spare-account session, or genuinely gone): fall through to
+    // the saved/live playability check below, same as every other platform.
+  }
+
   if (v.playability) {
-    const out: { aspect?: number; blocked?: "restricted" | "gone" } = {};
-    if (v.aspect) out.aspect = v.aspect;
     if (v.playability === "restricted" || v.playability === "gone") out.blocked = v.playability;
     return out;
   }
@@ -301,7 +331,6 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
         () => {}
       );
   }
-  const out: { aspect?: number; blocked?: "restricted" | "gone" } = {};
   if (m?.aspect) out.aspect = m.aspect;
   if (m?.playability === "restricted" || m?.playability === "gone") out.blocked = m.playability;
   return out;
@@ -326,7 +355,10 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", sIn.id).order("joined_at"),
     db().from("responses").select("player_id,video_id,rating,guessed_player_id,is_correct,is_decoy").eq("session_id", sIn.id),
     relevantIds.length
-      ? db().from("videos").select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect").in("id", relevantIds)
+      ? db()
+          .from("videos")
+          .select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect,direct_url,direct_url_expires")
+          .in("id", relevantIds)
       : Promise.resolve({ data: [] as VideoRow[], error: null }),
   ]);
   if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error) throw new HttpError(503, DB_DOWN);
@@ -386,10 +418,12 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     if (video && infoV) {
       if (infoV.aspect) video.aspect = infoV.aspect;
       if (infoV.blocked) video.blocked = infoV.blocked;
+      if (infoV.directUrl) video.directUrl = infoV.directUrl;
     }
     if (upNext && infoN) {
       if (infoN.aspect) upNext.aspect = infoN.aspect;
       if (infoN.blocked) upNext.blocked = infoN.blocked;
+      if (infoN.directUrl) upNext.directUrl = infoN.directUrl;
     }
   }
 

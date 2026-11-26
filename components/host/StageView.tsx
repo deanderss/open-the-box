@@ -70,6 +70,7 @@ export default function StageView({
           sourceUrl={state.video.sourceUrl}
           aspect={state.video.aspect}
           blocked={state.video.blocked}
+          directUrl={state.video.directUrl}
           next={state.upNext}
           fullscreen={fullscreen}
           overlay={

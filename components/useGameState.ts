@@ -9,9 +9,20 @@ export type GameState = {
   players: { id: string; name: string; color: string; answered: boolean }[];
   answered: number;
   eligible: number;
-  video: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; blocked?: "restricted" | "gone"; avgRating?: number | null; ratingCount?: number } | null;
+  video: {
+    id: string;
+    platform: string;
+    embedUrl: string;
+    sourceUrl: string;
+    aspect?: number;
+    blocked?: "restricted" | "gone";
+    /** host only, Instagram only: a direct CORS-enabled MP4 link, played natively instead of the embed — see lib/igDirect.ts */
+    directUrl?: string;
+    avgRating?: number | null;
+    ratingCount?: number;
+  } | null;
   /** host only: the next video in line, loaded invisibly in the background so it is ready the moment we get there */
-  upNext?: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; blocked?: "restricted" | "gone" } | null;
+  upNext?: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string } | null;
   reveal: {
     senderId: string | null;
     senderName: string;
