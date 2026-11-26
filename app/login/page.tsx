@@ -8,7 +8,7 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 function LoginInner() {
   const params = useSearchParams();
   const next = params.get("next") || "/groups";
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup">(params.get("mode") === "signup" ? "signup" : "login");
   const [slots, setSlots] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");

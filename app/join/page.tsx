@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
+import ModeratorPromo from "@/components/ModeratorPromo";
 import { useGameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
 import LiveCountdown from "@/components/LiveCountdown";
@@ -122,6 +123,7 @@ function JoinInner() {
           </button>
         </div>
       )}
+      <ModeratorPromo />
     </main>
   );
 }
@@ -207,6 +209,9 @@ function Controller({
   }
 
   const others = state.roster.filter((p) => p.id !== seat.playerId);
+  // Hide the sign-up ad only while actively rating/guessing, so it can never be mis-tapped next to
+  // the Lock in button — it's fine (and good exposure) on every other screen, including the wait.
+  const answering = !s.paused && s.state === "playing" && !!me && !me.answered;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -353,6 +358,8 @@ function Controller({
           )}
         </>
       )}
+
+      {!answering && <ModeratorPromo />}
     </main>
   );
 }
