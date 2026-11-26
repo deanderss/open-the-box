@@ -9,6 +9,7 @@ import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import EmbedPlayer from "@/components/EmbedPlayer";
 import GrandReveal from "@/components/GrandReveal";
+import HostPlayerPanel from "@/components/HostPlayerPanel";
 import { useGameState, useCountdown } from "@/components/useGameState";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
 
@@ -195,30 +196,33 @@ function HostInner({ groupId }: { groupId: string }) {
             </div>
             <p className="mt-4 font-display text-6xl tracking-[0.35em] text-white">{s.code}</p>
           </div>
-          <div className="card w-full max-w-md">
-            <p className="title text-2xl">Players in ({state.players.length})</p>
-            <div className="mt-4 flex min-h-[120px] flex-wrap gap-3">
-              <AnimatePresence>
-                {state.players.map((p) => (
-                  <motion.button
-                    key={p.id}
-                    initial={{ scale: 0, rotate: -20 }}
-                    animate={{ scale: 1, rotate: 0 }}
-                    exit={{ scale: 0 }}
-                    title="Click to remove"
-                    onClick={() => confirm(`Remove ${p.name} from this game? (frees the name for another phone)`) && act("kick", { playerId: p.id })}
-                    className="flex flex-col items-center gap-1"
-                  >
-                    <Avatar name={p.name} color={p.color} size={64} />
-                    <span className="text-sm font-semibold">{p.name}</span>
-                  </motion.button>
-                ))}
-              </AnimatePresence>
-              {state.players.length === 0 && <p className="text-white/50">Waiting for players…</p>}
+          <div className="flex w-full max-w-md flex-col gap-4">
+            <div className="card">
+              <p className="title text-2xl">Players in ({state.players.length})</p>
+              <div className="mt-4 flex min-h-[120px] flex-wrap gap-3">
+                <AnimatePresence>
+                  {state.players.map((p) => (
+                    <motion.button
+                      key={p.id}
+                      initial={{ scale: 0, rotate: -20 }}
+                      animate={{ scale: 1, rotate: 0 }}
+                      exit={{ scale: 0 }}
+                      title="Click to remove"
+                      onClick={() => confirm(`Remove ${p.name} from this game? (frees the name for another phone)`) && act("kick", { playerId: p.id })}
+                      className="flex flex-col items-center gap-1"
+                    >
+                      <Avatar name={p.name} color={p.color} size={64} />
+                      <span className="text-sm font-semibold">{p.name}</span>
+                    </motion.button>
+                  ))}
+                </AnimatePresence>
+                {state.players.length === 0 && <p className="text-white/50">Waiting for players…</p>}
+              </div>
+              <button className="btn btn-yellow mt-6 w-full text-2xl" disabled={busy || state.players.length === 0} onClick={() => act("begin")}>
+                ▶ Start the show
+              </button>
             </div>
-            <button className="btn btn-yellow mt-6 w-full text-2xl" disabled={busy || state.players.length === 0} onClick={() => act("begin")}>
-              ▶ Start the show
-            </button>
+            <HostPlayerPanel state={state} />
           </div>
         </section>
       )}
@@ -362,6 +366,7 @@ function HostInner({ groupId }: { groupId: string }) {
                 </button>
               </div>
             )}
+            {!fullscreen && <HostPlayerPanel state={state} />}
             <MiniScores scores={state.scores} />
           </div>
         </section>

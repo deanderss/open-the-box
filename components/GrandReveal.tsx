@@ -7,12 +7,12 @@ import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx
 
 type P = { id: string; name: string; color: string };
 
-// The whole reveal is about 2.5 seconds: a quick slot-machine reel (~1.3s), then the winner (~1.2s).
-const STEPS = 12; // how many names the slot reel flips through
-const BOOM_MS = 1200; // how long the winner screen stays up before the results panel
+// The whole reveal is about 4 seconds: a slot-machine reel (~2.3s), then the winner (~1.7s).
+const STEPS = 16; // how many names the slot reel flips through
+const BOOM_MS = 1700; // how long the winner screen stays up before the results panel
 
 /** Delay before flip i: fast at first, easing off so the last name lands with a little suspense. */
-const delayFor = (i: number) => 55 + 200 * (i / (STEPS - 1)) ** 3;
+const delayFor = (i: number) => 60 + 320 * (i / (STEPS - 1)) ** 3;
 const REEL_MS = Array.from({ length: STEPS }, (_, i) => delayFor(i)).reduce((a, b) => a + b, 0);
 
 /** Phones hold their own reveal back this long so they don't spoil the big screen. */
@@ -155,7 +155,7 @@ export default function GrandReveal({
                 {winner.name}!
               </motion.p>
               {rating != null && (
-                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
+                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
                   ⭐ {Number(rating).toFixed(1)} <span className="text-xl text-white/60">/ 10</span>
                 </motion.div>
               )}
