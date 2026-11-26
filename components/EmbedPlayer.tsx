@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { layoutFor, place } from "@/lib/immersive";
 import { openInApp } from "@/lib/openInApp";
 import { scrollToTop } from "@/lib/fullscreen";
@@ -326,7 +326,11 @@ function Slot({
  * after it has settled, then switched on the moment the game moves to it.
  * CSS overlay rather than the Fullscreen API alone so it also works on iPhone.
  */
-export default function EmbedPlayer({
+/** Wrapped in React.memo: its props (the current video, the one warming up next, the overlay) only ever
+ *  change on a real poll, not on every tick of the countdown or every unrelated re-render higher up the
+ *  tree, so there's no reason for this (fairly heavy — it owns a cross-origin iframe) tree to re-render
+ *  along with those. */
+function EmbedPlayer({
   embedUrl,
   platform,
   sourceUrl,
@@ -447,3 +451,5 @@ export default function EmbedPlayer({
     </div>
   );
 }
+
+export default memo(EmbedPlayer);

@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
-import Countdown from "@/components/Countdown";
+import LiveCountdown from "@/components/LiveCountdown";
+import TimerBar from "@/components/TimerBar";
 import EmbedPlayer from "@/components/EmbedPlayer";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
 import type { GameState } from "@/components/useGameState";
@@ -12,7 +13,7 @@ import MiniScores from "./MiniScores";
 
 export default function StageView({
   state,
-  remaining,
+  fetchedAt,
   fullscreen,
   setWantFull,
   reloadN,
@@ -26,7 +27,7 @@ export default function StageView({
   finishGame,
 }: {
   state: GameState;
-  remaining: number;
+  fetchedAt: number;
   fullscreen: boolean;
   setWantFull: (v: boolean) => void;
   reloadN: number;
@@ -73,19 +74,10 @@ export default function StageView({
           fullscreen={fullscreen}
           overlay={
             <div className="text-white">
-              {/* story-style timer bar */}
-              <div className="mx-2 mt-2 h-1 overflow-hidden rounded-full bg-white/25">
-                <div
-                  className="h-full rounded-full transition-[width] duration-300 ease-linear"
-                  style={{
-                    width: `${s.windowSeconds > 0 ? Math.max(0, Math.min(100, (remaining / (s.windowSeconds * 1000)) * 100)) : 0}%`,
-                    background: remaining <= 15000 ? "#FF5E5E" : remaining <= 45000 ? "#FFD23F" : "#3DDC97",
-                  }}
-                />
-              </div>
+              <TimerBar remainingMs={s.remainingMs} fetchedAt={fetchedAt} totalSeconds={s.windowSeconds} active={s.state === "playing"} />
               <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
                 <div className="flex items-center gap-3 drop-shadow">
-                  <Countdown ms={remaining} total={s.windowSeconds} size={40} />
+                  <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={40} />
                   <span className="font-display text-base">
                     <span className="text-mint">{state.answered}</span>
                     <span className="text-white/70"> / {state.eligible} locked in</span>
@@ -204,7 +196,7 @@ export default function StageView({
         {s.state === "playing" ? (
           <div className="card flex flex-col items-center gap-4">
             <p className="title text-2xl">Rate it &amp; guess who sent it!</p>
-            <Countdown ms={remaining} total={s.windowSeconds} size={150} />
+            <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={150} />
             <p className="font-display text-3xl">
               <span className="text-mint">{state.answered}</span>
               <span className="text-white/70"> / {state.eligible} locked in</span>

@@ -3,9 +3,9 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
-import Countdown from "@/components/Countdown";
-import { useGameState, useCountdown } from "@/components/useGameState";
+import { useGameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
+import LiveCountdown from "@/components/LiveCountdown";
 import { useSeat, type Seat, type SeatResult } from "@/components/useSeat";
 import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
@@ -143,7 +143,6 @@ function Controller({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const s = state?.session;
-  const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing");
   useWakeLock(!!s && s.state !== "finished");
 
   // "You rated 7, guessed Sam": written once lock-in succeeds, read back here so it survives a refresh (the
@@ -253,7 +252,7 @@ function Controller({
             <p className="font-display text-white/70">
               Video {s.index + 1} / {s.total}
             </p>
-            <Countdown ms={remaining} total={s.windowSeconds} size={72} />
+            <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={72} />
           </div>
           {me.isMine && (
             <div className="rounded-2xl bg-bubble/30 p-3 text-center font-display">This one&apos;s yours 🤫 Act natural… lock in anyway so nobody suspects!</div>

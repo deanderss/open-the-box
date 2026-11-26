@@ -2,8 +2,8 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import GrandReveal from "@/components/GrandReveal";
-import { useGameState, useCountdown } from "@/components/useGameState";
+import dynamic from "next/dynamic";
+import { useGameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
 import { enterNativeFullscreen, exitNativeFullscreen, scrollToTop } from "@/lib/fullscreen";
 import HostHeader from "@/components/host/HostHeader";
@@ -11,6 +11,10 @@ import LobbyView from "@/components/host/LobbyView";
 import PausedView from "@/components/host/PausedView";
 import StageView from "@/components/host/StageView";
 import Finale from "@/components/host/Finale";
+
+// The grand-reveal slot machine (plus its confetti/sound effects) is only ever needed once per video, well
+// after the page has loaded, so it's loaded on first use instead of sitting in the page's initial bundle.
+const GrandReveal = dynamic(() => import("@/components/GrandReveal"), { ssr: false });
 
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
@@ -25,7 +29,6 @@ function HostInner({ groupId }: { groupId: string }) {
   useEffect(() => setOrigin(window.location.origin), []);
 
   const s = state?.session;
-  const remaining = useCountdown(s?.remainingMs, fetchedAt, s?.state === "playing" && !s?.paused);
   useWakeLock(!!s && s.state !== "finished");
 
   // Fullscreen while a video is playing; back to the window view at the reveal (or when paused).
@@ -56,16 +59,23 @@ function HostInner({ groupId }: { groupId: string }) {
   // Leaving the page should never leave the browser stuck in fullscreen
   useEffect(() => () => exitNativeFullscreen(), []);
 
-  // When the local countdown hits 0, poke the server once (it re-checks the time itself). Cleared on every
-  // re-run so a fast state change right after hitting 0 can't leave a stray poke scheduled for later.
+  // Poke the server once right after the window should run out (it re-checks the time itself), scheduled
+  // directly off the server snapshot instead of a locally-ticking value — so this effect (and HostInner)
+  // only re-runs once per poll, not four times a second. Re-armed on every snapshot and cleared on
+  // unmount/re-run, so a fast state change can't leave a stray poke scheduled for later.
   const pokedFor = useRef<number>(-1);
   useEffect(() => {
-    if (s?.state === "playing" && remaining <= 0 && pokedFor.current !== s.index) {
-      pokedFor.current = s.index;
-      const t = setTimeout(refresh, 400);
-      return () => clearTimeout(t);
-    }
-  }, [remaining, s?.state, s?.index, refresh]);
+    if (!s || s.state !== "playing" || s.paused || pokedFor.current === s.index) return;
+    const msLeft = s.remainingMs - (Date.now() - fetchedAt);
+    const t = setTimeout(
+      () => {
+        pokedFor.current = s.index;
+        refresh();
+      },
+      Math.max(0, msLeft) + 400,
+    );
+    return () => clearTimeout(t);
+  }, [s?.remainingMs, fetchedAt, s?.state, s?.paused, s?.index, refresh]);
 
   /** Returns whether the action actually succeeded, so callers (e.g. "pause & exit") can decide what to do next. */
   async function act(action: string, extra: Record<string, string> = {}): Promise<boolean> {
@@ -155,7 +165,7 @@ function HostInner({ groupId }: { groupId: string }) {
       {!s.paused && (s.state === "playing" || s.state === "reveal") && state.video && (
         <StageView
           state={state}
-          remaining={remaining}
+          fetchedAt={fetchedAt}
           fullscreen={fullscreen}
           setWantFull={setWantFull}
           reloadN={reloadN}

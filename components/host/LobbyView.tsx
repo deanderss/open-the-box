@@ -1,9 +1,15 @@
 "use client";
 import { motion, AnimatePresence } from "framer-motion";
-import { QRCodeSVG } from "qrcode.react";
+import dynamic from "next/dynamic";
 import Avatar from "@/components/Avatar";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
 import type { GameState } from "@/components/useGameState";
+
+// Only the lobby ever needs a QR code, so it's loaded on first use instead of sitting in the main bundle.
+const QRCodeSVG = dynamic(() => import("qrcode.react").then((m) => m.QRCodeSVG), {
+  ssr: false,
+  loading: () => <div className="h-[220px] w-[220px] animate-pulse rounded-xl bg-black/10" />,
+});
 
 export default function LobbyView({
   state,
