@@ -40,8 +40,13 @@ type Media = {
   directUrl?: string;
 };
 
-/** Which videos can be loaded invisibly ahead of time. Facebook is left out: its player can't be told to start later. */
-const canPreload = (m: Media) => !m.blocked && m.platform !== "facebook";
+/**
+ * Which videos can be loaded invisibly ahead of time. Facebook is left out: its player can't be told to start
+ * later. A `blocked` video can still be preloaded if it also has a `directUrl` (a restricted reel the spare
+ * account's session resolved): it plays as a normal native video, `blocked` is only a fallback in case that
+ * link stops working.
+ */
+const canPreload = (m: Media) => (!m.blocked || !!m.directUrl) && m.platform !== "facebook";
 
 /** The same embed, but told NOT to start by itself (a preloaded video must stay silent until it is shown). */
 function preloadSrc(platform: string, url: string) {
@@ -175,13 +180,15 @@ function Slot({
   const { embedUrl, platform, sourceUrl, aspect, blocked, directUrl } = media;
   const site = SITE[platform] ?? "the site";
   const [forced, setForced] = useState(false); // "try it here anyway"
-  const showBlocked = !!blocked && !forced;
   const isUpload = platform === "upload";
   // A resolved Instagram direct link plays natively too, unless it already failed once at runtime (expired,
-  // or the CDN refused it) — then it falls back to the plain iframe below, same as a video with no direct link.
+  // or the CDN refused it) — then, if the reel is also known `blocked` (it was only ever resolvable through
+  // the spare account's session, not genuinely embeddable), fall back to the "open it in the app" panel
+  // instead of a dead cross-origin iframe; otherwise the iframe is a legitimate fallback on its own.
   const [directFailed, setDirectFailed] = useState(false);
   const useDirect = platform === "instagram" && !!directUrl && !directFailed;
   const isNative = isUpload || useDirect; // plays in a native <video>, no iframe, no slow-load timers
+  const showBlocked = !!blocked && !forced && !isNative;
   const nativeSrc = isUpload ? embedUrl : directUrl;
   const frameRef = useRef<HTMLIFrameElement>(null);
 

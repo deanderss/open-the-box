@@ -7,12 +7,12 @@ import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx
 
 type P = { id: string; name: string; color: string };
 
-// The whole reveal is about 4 seconds: a slot-machine reel (~2.3s), then the winner (~1.7s).
+// The whole reveal is about 6.5 seconds: a slot-machine reel (~3.8s), then the winner (~2.7s).
 const STEPS = 16; // how many names the slot reel flips through
-const BOOM_MS = 1700; // how long the winner screen stays up before the results panel
+const BOOM_MS = 2742; // how long the winner screen stays up before the results panel
 
 /** Delay before flip i: fast at first, easing off so the last name lands with a little suspense. */
-const delayFor = (i: number) => 60 + 320 * (i / (STEPS - 1)) ** 3;
+const delayFor = (i: number) => 97 + 517 * (i / (STEPS - 1)) ** 3;
 
 /** The reel and the winner card both show one name at a huge size — long ones need to shrink to still fit on one line. */
 function reelNameClass(name: string) {

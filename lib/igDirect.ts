@@ -23,6 +23,20 @@
 export interface DirectVideo {
   url: string;
   expiresAt: number; // epoch ms
+  /**
+   * "anonymous": the reel is genuinely embeddable, so this link (and the plain iframe) will keep working
+   * regardless of the spare account. "session": the reel is still restricted by Instagram's own rules and
+   * this link only exists because the spare account's session is currently working — if that session ever
+   * stops working (banned, rotated out, expired), this reel goes back to needing the "open it in the app"
+   * fallback, so its playability must keep reflecting that instead of being locked in as "ok" forever.
+   */
+  source: "anonymous" | "session";
+}
+
+/** What `extractVideoUrl` can tell from the page/response text alone, before either caller tags the source. */
+interface RawVideo {
+  url: string;
+  expiresAt: number;
 }
 
 const EMBED_UA =
@@ -54,7 +68,7 @@ function expiryOf(url: string): number {
  * show up as one or more backslashes followed by a slash. A URL never legitimately contains a backslash, so
  * stripping every backslash out of the captured run — rather than trying to count escape levels — recovers it.
  */
-export function extractVideoUrl(html: string): DirectVideo | null {
+export function extractVideoUrl(html: string): RawVideo | null {
   const key = html.indexOf("video_url");
   if (key < 0) return null;
   const start = html.indexOf("https:", key);
@@ -89,7 +103,8 @@ async function anonymous(embedUrl: string): Promise<DirectVideo | null> {
   try {
     const res = await get(embedUrl, { "User-Agent": EMBED_UA, "Accept-Language": "en-US,en;q=0.9" });
     if (!res.ok) return null;
-    return extractVideoUrl(await res.text());
+    const raw = extractVideoUrl(await res.text());
+    return raw ? { ...raw, source: "anonymous" } : null;
   } catch {
     return null;
   }
@@ -119,7 +134,7 @@ async function loggedInViaAppApi(shortcode: string, sid: string): Promise<Direct
     const url = j?.items?.[0]?.video_versions?.[0]?.url;
     if (!url) return null;
     const expiresAt = expiryOf(url) - EXPIRY_MARGIN_MS;
-    return expiresAt > Date.now() ? { url, expiresAt } : null;
+    return expiresAt > Date.now() ? { url, expiresAt, source: "session" } : null;
   } catch {
     return null;
   }
@@ -131,7 +146,8 @@ async function loggedInViaEmbed(embedUrl: string, sid: string): Promise<DirectVi
     const res = await get(embedUrl, { "User-Agent": EMBED_UA, Cookie: `sessionid=${sid}`, "X-IG-App-ID": IG_APP_ID });
     if (res.status === 401 || res.status === 403) return "dead";
     if (!res.ok) return null;
-    return extractVideoUrl(await res.text());
+    const raw = extractVideoUrl(await res.text());
+    return raw ? { ...raw, source: "session" } : null;
   } catch {
     return null;
   }

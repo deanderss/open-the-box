@@ -285,36 +285,51 @@ type VideoRow = {
  * Instagram) a direct MP4 link for native playback (see lib/igDirect.ts). Uses whatever is already saved on
  * the row when it's still valid; only reaches out to the platform live when it isn't, writing the result back
  * so every poll after this one — for as long as it stays valid — skips the network call entirely.
+ *
+ * `blocked` and `directUrl` are not mutually exclusive: a reel resolved only via the spare account's session
+ * is still "restricted" by Instagram's own rules, so both are sent together — the host plays it natively, but
+ * if the spare account's session ever stops working (banned, rotated out, expired) and the native video fails
+ * or can no longer be refreshed, EmbedPlayer falls back to the "open it in the app" panel instead of a dead
+ * iframe. Only a reel confirmed *anonymously* playable (truly embeddable, no spare account involved) is ever
+ * marked "ok" and left unblocked for good.
  */
 async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string }> {
   const out: { aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string } = {};
   if (v.aspect) out.aspect = v.aspect;
 
   // Instagram: a direct, CORS-enabled link means native <video> playback instead of the cross-origin embed —
-  // strictly better whenever it's available, whatever the saved playability says. The link is signed and
-  // expires after roughly a day, so it's cached on the row and re-resolved only once that runs out.
+  // strictly better whenever it's available. The link is signed and expires after roughly a day, so it's
+  // cached on the row and re-resolved only once that runs out.
+  let knownOk = false; // true only once genuinely confirmed embeddable (the anonymous path), not just "has a link right now"
   if (v.platform === "instagram") {
     const expires = v.direct_url_expires ? new Date(v.direct_url_expires).getTime() : 0;
     if (v.direct_url && expires > Date.now()) {
       out.directUrl = v.direct_url;
-      return out;
+      // A cached link doesn't tell us which path it came from; fall through and trust the saved playability.
+    } else {
+      const direct = await resolveInstagramVideo(v.embed_url, v.source_url).catch(() => null);
+      if (direct) {
+        out.directUrl = direct.url;
+        knownOk = direct.source === "anonymous";
+        db()
+          .from("videos")
+          .update({
+            direct_url: direct.url,
+            direct_url_expires: new Date(direct.expiresAt).toISOString(),
+            ...(knownOk ? { playability: "ok" } : {}),
+          })
+          .eq("id", v.id)
+          .then(
+            () => {},
+            () => {}
+          );
+      }
+      // No direct link at all (restricted with no working spare-account session, or genuinely gone): fall
+      // through to the saved/live playability check below, same as every other platform.
     }
-    const direct = await resolveInstagramVideo(v.embed_url, v.source_url).catch(() => null);
-    if (direct) {
-      out.directUrl = direct.url;
-      db()
-        .from("videos")
-        .update({ direct_url: direct.url, direct_url_expires: new Date(direct.expiresAt).toISOString(), playability: "ok" })
-        .eq("id", v.id)
-        .then(
-          () => {},
-          () => {}
-        );
-      return out;
-    }
-    // No direct link (restricted with no working spare-account session, or genuinely gone): fall through to
-    // the saved/live playability check below, same as every other platform.
   }
+
+  if (knownOk) return out; // anonymously confirmed embeddable this poll — no need to also check playability
 
   if (v.playability) {
     if (v.playability === "restricted" || v.playability === "gone") out.blocked = v.playability;
@@ -331,7 +346,7 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
         () => {}
       );
   }
-  if (m?.aspect) out.aspect = m.aspect;
+  if (m?.aspect && !out.aspect) out.aspect = m.aspect;
   if (m?.playability === "restricted" || m?.playability === "gone") out.blocked = m.playability;
   return out;
 }
