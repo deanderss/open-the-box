@@ -188,8 +188,15 @@ End game at any time: finished (unplayed videos stay queued)
 **Shared components:**
 - `Box.tsx`: the clickable box that opens. It wobbles, fires confetti, pops the lid, then calls `onOpened`.
 - `BoxMascot.tsx`: the non-interactive mascot. Its moods are `idle`, `hungry`, `chomp`, `rock`, `meh` and `stink`.
-- `Avatar`, `Countdown`, `EmbedPlayer`, `TopBar`, `LogoutButton`.
-- `useGameState.ts`: polling, the realtime subscription, and the `useCountdown` hook.
+- `Avatar`, `Countdown`, `EmbedPlayer` (memoized — see section 12), `TopBar`, `LogoutButton`.
+- `useGameState.ts`: polling and the realtime subscription. Returns `{ state, error, refresh, fetchedAt, reconnecting }`. The old `useCountdown` export is gone — see `LiveCountdown`/`TimerBar` in section 12.
+- `useSeat.ts`: the "claim a seat in this room code" lifecycle (restore from `localStorage`, `pick`, `clear`, `submitAnswer`), shared by `app/join/page.tsx`'s `Controller` and `HostPlayerPanel`.
+- `components/host/*`: `HostHeader`, `LobbyView`, `StageView`, `RevealPanel`, `MiniScores`, `Finale` — the host screen's views, split out of `play/page.tsx` (see section 12).
+- `lib/fullscreen.ts`: `enterNativeFullscreen`/`exitNativeFullscreen`/`scrollToTop` helpers used by the host screen.
+- `lib/confetti.ts`: lazy-loading wrapper around `canvas-confetti` (`fireConfetti`, `confettiShape`) — every call site imports this instead of `canvas-confetti` directly, so the library is code-split into its own chunk.
+- `components/Providers.tsx`: wraps the app in framer-motion's `MotionConfig reducedMotion="user"`, rendered from `app/layout.tsx`.
+- `components/LiveCountdown.tsx`, `components/TimerBar.tsx`: leaf components that own their own 250ms ticker internally, given just `{ remainingMs, fetchedAt, ... }`. Use these (not a parent-level `setInterval`) for anything that needs to visibly count down — see section 12.
+- `components/useWakeLock.ts`: wraps `navigator.wakeLock` (Screen Wake Lock API), re-acquiring on `visibilitychange`.
 
 ---
 
@@ -349,4 +356,62 @@ Live at https://open-the-box-coral.vercel.app (Vercel team "Open the Box") on Su
 - **Not seated:** "Playing too? Pick your name" — a grid of roster names not already in `state.players`. Tapping one joins.
 - **Seated, video playing, not yet answered:** a 1-10 rating grid and a guess grid of the rest of the roster, styled identically whether or not a button has been tapped (so the shared screen never shows a selection) — the only visible change is the **Lock in** button going from disabled/greyed (`.btn`'s `disabled:opacity-50`) to enabled once both a rating and a guess are chosen. Submitting calls `/api/session/answer`; after that (or during reveal / lobby) it just shows "Playing as `<name>`" or "🔒 Locked in", never a result.
 - Because the moderator is now a normal `session_players` row, server-side auto-reveal (`maybeAutoReveal`, "everyone answered") waits on them too, same as any player.
+
+---
+
+## 12. Full app hardening pass (Nov 2026): reliability, flow, performance, design, security, code health
+
+Three phases, each type-checked and build-verified, shipped as separate commits on `master`, then deployed together.
+
+### Phase 1 — security and server-side reliability (no UI changes)
+- **Rate limiting tightened**: per-device state polling is now limited (not just joins/submissions/sign-ups), and wrong-code lookups on `/api/session/join` get their own tighter limit (`codemiss:<ip>`, 30 per 10 minutes) separate from the general join limit, since repeated misses look like code-guessing. See the table in section 4.
+- **Host view requires a moderator**, with the group-mod check cached per request instead of re-queried.
+- **The player token moved from the URL query string to an `x-otb-token` header** on `/api/session/state`, so it never shows up in server access logs or browser history.
+- **Guards against races**: `showVideoAt`/`beginSession`/skip now take an `expectIndex` and use a conditional update (`where current_index = expectIndex`), so a double-tap or two moderators clicking at once can't advance the video twice or desync `video_order`. Answer submission re-checks eligibility and sends a single broadcast instead of one per write. A kicked player's old answers are excluded from counts. `/api/session/join` returns specific error codes (full room, name taken, game over) instead of a generic failure.
+- **`buildState` (the hot path, called on every poll)**: the answer-window setting is cached in memory for 60s instead of queried every call; auto-reveal and the videos-shown lookup are batched into fewer round trips; the finale calculation is cached per session once computed; the realtime broadcast has a timeout so a slow/stuck broadcast can't block the response; a database read error now returns `503` instead of a generic `500` or a silent bad state.
+- **Migration `0900`**: adds indexes used by the hot-path queries, a partial unique index enforcing **one open (non-ended) session per box** (guarded by an application-level duplicate check before relying on it), rewrites the `group_leaderboard` view, and adds `videos.playability`/`videos.aspect` columns so the playability check and aspect ratio (previously recomputed live) are saved at submit time and just read back on the host view.
+- Shipped with throwaway-box tests directly against production (guards, kicked-player exclusion, host-auth enforcement, an 11-simulated-device poll burst, saved playability round-tripping) before deploying.
+
+### Phase 2 — refactor (no behavior change)
+- `play/page.tsx` (previously one large file) split into `components/host/HostHeader.tsx`, `LobbyView.tsx`, `StageView.tsx`, `RevealPanel.tsx`, `MiniScores.tsx`, `Finale.tsx`. `play/page.tsx` itself is now just state plumbing (`useGameState`, `act()`, the preload-next-video effect) and picks which host view to render.
+- `lib/fullscreen.ts` pulled out the native-fullscreen/scroll-reset helpers that were inline in `play/page.tsx`.
+- `useSeat.ts` extracted the "claim a seat" lifecycle that `app/join/page.tsx` and `HostPlayerPanel` had each implemented separately, so there's one place that owns the `otb-seat-<CODE>` localStorage key and its re-validation.
+- Fixed a leftover bug while refactoring: `app/s/[token]/page.tsx`'s submission-verdict `setTimeout` wasn't cleared on unmount or on a rapid "try again" tap (it's called both automatically after a successful submission and manually from a "try again" button); now tracked in a ref and cleared before each reschedule and on unmount.
+
+### Phase 3 — client reliability, flow, design/a11y, performance, then ship
+
+**Client reliability** (`components/useGameState.ts`, `app/g/[groupId]/play/page.tsx`)
+- Polling changed from a fixed `setInterval` to a **self-rescheduling `setTimeout`** that: pauses while the tab is hidden or the game is `finished` (a realtime nudge still refetches in both cases), uses a longer interval in the lobby, and always reschedules fresh after each fetch so a realtime-triggered refresh never leaves a near-duplicate poll right behind it. A `visibilitychange` listener forces an immediate refresh when the tab becomes visible again.
+- A realtime nudge arriving while a fetch is already in flight is **coalesced** into one follow-up refresh instead of firing overlapping requests.
+- Renders are skipped when a poll returns the exact same state except for the live countdown fields (deep-equal comparison with timer fields zeroed out first), so a 2-second poll with nothing new doesn't force a re-render.
+- A **`reconnecting` flag** (returned from `useGameState`) flips on after two consecutive failed/errored polls, or immediately if `navigator.onLine` is `false`, and clears on the next success. `HostHeader` and the phone controller (`app/join/page.tsx`) both show a "Reconnecting…" pill when it's set.
+- `act()` (the host's action dispatcher) now wraps its fetch in `try/catch/finally`, always calls `refresh()` and clears the busy flag regardless of outcome, and reports success/failure back to the caller — `pauseAndExit()` only navigates away if the pause actually succeeded, instead of leaving if the request failed.
+
+**Flow / UX** (`components/useWakeLock.ts`, `components/host/HostHeader.tsx`, `components/host/StageView.tsx`, `components/HostPlayerPanel.tsx`, `app/join/page.tsx`, `components/host/LobbyView.tsx`, `components/host/RevealPanel.tsx`)
+- **Screen Wake Lock**: both the host stage and the phone controller request `navigator.wakeLock` while a game is in progress (`useWakeLock`), re-acquiring on `visibilitychange` since browsers auto-release it when backgrounded.
+- **Host header/toolbar now fit a phone-width host screen**: the header wraps and hides the join-code pill below `md` once the game has started; the fullscreen toolbar collapses Skip/Reload/Pause into a "⋯ More" menu below `sm`.
+- **Answer bottom sheet**: when the moderator is seated and playing along in fullscreen, a "📝 Answer" button opens `HostPlayerPanel` as a bottom sheet over the video (`fixed inset-x-0 bottom-0`, safe-area-aware padding) instead of it being unreachable behind the fullscreen stage. The sheet container is always mounted (toggled via a CSS class, not unmounted) so `HostPlayerPanel`'s own seat-check effect doesn't re-run every time it opens; it auto-closes once the moderator locks in.
+- **Sticky action bar**: the Reveal/Skip (playing) and Next/Finished (reveal) buttons are pinned to the bottom of the screen below `lg`, so they're reachable without scrolling past the guess list on a phone-width host screen; they revert to normal inline flow at `lg`+.
+- **Phone controller** (`app/join/page.tsx`): a "You rated N, guessed X" summary is written to `sessionStorage` (`otb-lockin-<code>-<index>`) right when you lock in and read back on refresh, so reloading mid-wait doesn't lose it. Network errors during code lookup are now caught and shown (not just non-2xx responses). Being kicked and needing to re-pick your name now shows an explicit message. Vibrate-on-lock-in only fires for a real (non-decoy) rating, matching the decoy logic elsewhere. Safe-area insets (`env(safe-area-inset-*)`) are respected on the main padding and the sticky Lock-in button.
+- **Lobby roster** (`LobbyView.tsx`): player avatars show a small "×" kick badge instead of relying purely on a click-to-confirm interaction being discoverable; `/join`'s roster-pick screen shows "(taken)" next to names already claimed.
+- **Reveal panel guess list** (`RevealPanel.tsx`): two-column layout from `lg` up (a TV being watched from across the room), instead of a single scrolling column.
+
+**Design / accessibility** (project-wide contrast pass, `components/GrandReveal.tsx`, `components/host/RevealPanel.tsx`, `app/join/page.tsx`, `components/host/StageView.tsx`, `lib/confetti.ts`, `components/Providers.tsx`, `app/globals.css`, `app/layout.tsx`)
+- **Contrast**: every `text-white/40`/`/50`/`/60` occurrence project-wide was bumped to `text-white/70` (the minimum the plan called readable); the one `text-[11px]` occurrence became `text-xs`.
+- **Long names**: `GrandReveal`'s reel/winner name and `RevealPanel`'s sender name now pick a smaller text size as the name gets longer, instead of overflowing or wrapping awkwardly.
+- **ARIA**: icon-only buttons (reload, pause, mute, the "more actions" toggle) got `aria-label`s with their emoji wrapped in `aria-hidden` spans; rating/guess tiles on the **phone** got `aria-pressed` — deliberately **not** added to the host's hidden-selection tiles in `HostPlayerPanel`, since that would leak the selection to assistive tech on a screen everyone can see.
+- **Reduced motion**: the whole app is wrapped in framer-motion's `MotionConfig reducedMotion="user"` (`components/Providers.tsx`), plus a CSS `prefers-reduced-motion` backstop in `app/globals.css` for anything animated with plain CSS transitions. `canvas-confetti` is still called (it respects `disableForReducedMotion` itself via `lib/confetti.ts`).
+- **Focus rings**: a global `:focus-visible` rule (`app/globals.css`) gives every button/link/input a visible ring, since many of the app's interactive elements are custom-styled `<button>`s that don't get a visible default outline.
+- **Pinch-zoom**: `maximumScale: 1` was removed from the `viewport` export in `app/layout.tsx` (it was blocking pinch-to-zoom, an accessibility anti-pattern).
+
+**Performance** (`components/LiveCountdown.tsx`, `components/TimerBar.tsx`, `components/EmbedPlayer.tsx`, `components/host/LobbyView.tsx`, `app/layout.tsx`, `app/g/[groupId]/play/layout.tsx`)
+- **Countdown ticking moved into leaf components**: `LiveCountdown` and `TimerBar` each own a private 250ms `setInterval` and take the raw server snapshot (`remainingMs` + `fetchedAt`) as props, instead of the parent page re-rendering 4 times a second to recompute a `ms` value and pass it down. `useGameState`'s old `useCountdown` hook is gone.
+- `EmbedPlayer` is wrapped in `memo()` so an iframe holding a cross-origin video doesn't get torn down and rebuilt on unrelated state changes.
+- `canvas-confetti`, `qrcode.react`'s `QRCodeSVG`, and `GrandReveal` are all loaded via `next/dynamic({ ssr: false })` (confetti through the `lib/confetti.ts` wrapper), so they're split into their own on-demand chunks instead of sitting in the initial bundle for every page.
+- `Fredoka`/`Nunito` are loaded without an explicit `weight` array, since both ship as variable fonts on Google Fonts — this loads one variable file instead of three or four static-weight files.
+- The video-site `preconnect`/`dns-prefetch` hints moved out of the root layout and into a route-scoped `app/g/[groupId]/play/layout.tsx` (relying on Next's automatic `<link>` hoisting), so pages that never embed a video don't pay for those connections.
+
+**Shipping**
+- Re-verified end to end with a local Puppeteer harness running the real app (built from the real source, pointed at the production Supabase project) against a throwaway fixture box, cleaned up (DB rows and the throwaway Supabase Auth user) immediately after: login, open the box, two phones joining, starting the game, the moderator seating as a non-sender player and reaching the Answer sheet, the sticky action bar at phone width, the lock-in summary (including surviving a reload), `prefers-reduced-motion` emulation, the reconnecting pill (going offline and back), and stage preload.
+- One lesson from building that harness worth keeping in mind for future ones: **`useSeat`/`HostPlayerPanel` is a per-component-instance hook** — `StageView` mounts a different `HostPlayerPanel` instance depending on whether the stage happens to be in its windowed or fullscreen layout at that moment, so a UI click that seats a player can land on an instance that gets unmounted a moment later (the `localStorage` write survives; the in-memory seat doesn't). Seeding `localStorage` directly and reloading avoids that race in a harness; a real user doesn't hit it because they aren't toggling fullscreen state at the exact instant they tap "pick a name".
 
