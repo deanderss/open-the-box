@@ -2,6 +2,7 @@ import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
 import { checkMedia } from "./playable";
 import { purgeUpload } from "./uploads";
+import { SENDER_BONUS } from "./points";
 
 export type SessionRow = {
   id: string;
@@ -18,7 +19,6 @@ export type SessionRow = {
 };
 
 const db = () => supabaseAdmin();
-
 export async function getWindowSeconds() {
   const { data } = await db().from("app_settings").select("answer_window_seconds").eq("id", 1).single();
   return (data?.answer_window_seconds as number) ?? 150;
@@ -265,7 +265,8 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     }
   }
 
-  // Session scoreboard (correct guesses this session, decoys excluded)
+  // Session scoreboard: correct guesses (decoys excluded) plus half a point to whoever sent each video that has
+  // been revealed, so the person who filled the box still has a shot at winning.
   const scoreMap = new Map<string, number>();
   (sp || []).forEach((r) => scoreMap.set(r.player_id as string, 0));
   (resps || []).forEach((r) => {
@@ -273,9 +274,34 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       scoreMap.set(r.player_id as string, (scoreMap.get(r.player_id as string) || 0) + 1);
     }
   });
+  const bonusMap = new Map<string, number>();
+  if (s.state !== "lobby" && s.current_index >= 0) {
+    const revealedUpTo = s.state === "playing" ? s.current_index : s.current_index + 1; // exclusive
+    const revealedIds = s.video_order.slice(0, revealedUpTo);
+    if (revealedIds.length) {
+      const { data: sent } = await db().from("videos").select("id,submitted_by").in("id", revealedIds).eq("status", "played");
+      (sent || []).forEach((v) => {
+        const by = v.submitted_by as string | null;
+        if (by && scoreMap.has(by)) bonusMap.set(by, (bonusMap.get(by) || 0) + SENDER_BONUS);
+      });
+    }
+  }
+  const pointsOf = (pid: string) => (scoreMap.get(pid) || 0) + (bonusMap.get(pid) || 0);
   const scores = Array.from(scoreMap.entries())
-    .map(([pid, correct]) => ({ playerId: pid, name: nameOf(pid), color: colorOf(pid), correct }))
-    .sort((a, b) => b.correct - a.correct);
+    .map(([pid, correct]) => ({ playerId: pid, name: nameOf(pid), color: colorOf(pid), correct, bonus: bonusMap.get(pid) || 0, points: pointsOf(pid) }))
+    .sort((a, b) => b.points - a.points || b.correct - a.correct);
+
+  // Host only: the next video in line, so the stage can load it in the background while this one plays.
+  let upNext: Record<string, unknown> | null = null;
+  if (viewer.kind === "host" && (s.state === "playing" || s.state === "reveal") && s.current_index + 1 < s.video_order.length) {
+    const { data: nv } = await db().from("videos").select("id,platform,embed_url,source_url").eq("id", s.video_order[s.current_index + 1]).maybeSingle();
+    if (nv) {
+      const m = await checkMedia({ platform: nv.platform as string, embedUrl: nv.embed_url as string, sourceUrl: nv.source_url as string }).catch(() => null);
+      upNext = { id: nv.id, platform: nv.platform, embedUrl: nv.embed_url, sourceUrl: nv.source_url };
+      if (m?.aspect) upNext.aspect = m.aspect;
+      if (m?.playability === "restricted" || m?.playability === "gone") upNext.blocked = m.playability;
+    }
+  }
 
   let reveal: Record<string, unknown> | null = null;
   if (s.state === "reveal" && vid) {
@@ -305,7 +331,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       answered: !!mine,
       isMine: !!vid && sender === viewer.playerId,
       correct: s.state === "reveal" && mine ? !!mine.is_correct && !mine.is_decoy : null,
-      score: scoreMap.get(viewer.playerId) || 0,
+      score: pointsOf(viewer.playerId),
     };
   }
 
@@ -328,8 +354,9 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     }
     const { data: allTime } = await db()
       .from("group_leaderboard")
-      .select("player_id,display_name,avatar_color,correct,guesses")
+      .select("player_id,display_name,avatar_color,correct,guesses,submitted,points")
       .eq("group_id", s.group_id)
+      .order("points", { ascending: false })
       .order("correct", { ascending: false })
       .limit(5);
     const { count: remaining } = await db()
@@ -367,6 +394,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     answered: currentResps.length,
     eligible: (sp || []).length,
     video: s.state === "playing" || s.state === "reveal" ? video : null,
+    upNext,
     reveal,
     scores,
     finale,

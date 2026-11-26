@@ -10,16 +10,19 @@ export type GameState = {
   answered: number;
   eligible: number;
   video: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; blocked?: "restricted" | "gone"; avgRating?: number | null; ratingCount?: number } | null;
+  /** host only: the next video in line, loaded invisibly in the background so it is ready the moment we get there */
+  upNext?: { id: string; platform: string; embedUrl: string; sourceUrl: string; aspect?: number; blocked?: "restricted" | "gone" } | null;
   reveal: {
     senderId: string | null;
     senderName: string;
     senderColor: string | null;
     guesses: { playerId: string; name: string; color: string; guessedName: string; correct: boolean; rating: number }[];
   } | null;
-  scores: { playerId: string; name: string; color: string; correct: number }[];
+  /** `correct` right guesses + `bonus` half-points for videos they sent = `points` */
+  scores: { playerId: string; name: string; color: string; correct: number; bonus: number; points: number }[];
   finale: {
     topVideo: { id: string; platform: string; embed_url: string; source_url: string; avg_rating: number; rating_count: number; senderName: string } | null;
-    allTime: { player_id: string; display_name: string; avatar_color: string; correct: number; guesses: number }[];
+    allTime: { player_id: string; display_name: string; avatar_color: string; correct: number; guesses: number; submitted: number; points: number }[];
     /** videos still waiting in the box for the next game */
     remaining: number;
   } | null;

@@ -7,16 +7,16 @@ import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx
 
 type P = { id: string; name: string; color: string };
 
-const LOCK_MS = 1500; // "everyone's locked in" beat
-const STEPS = 26; // how many names the slot reel flips through
-const BOOM_MS = 4200; // how long the winner screen stays up before the results panel
+// The whole reveal is about 2.5 seconds: a quick slot-machine reel (~1.3s), then the winner (~1.2s).
+const STEPS = 12; // how many names the slot reel flips through
+const BOOM_MS = 1200; // how long the winner screen stays up before the results panel
 
-/** Delay before flip i: fast at first, slowing to a crawl so the last name lands with suspense. */
-const delayFor = (i: number) => 55 + 430 * (i / (STEPS - 1)) ** 3;
+/** Delay before flip i: fast at first, easing off so the last name lands with a little suspense. */
+const delayFor = (i: number) => 55 + 200 * (i / (STEPS - 1)) ** 3;
 const REEL_MS = Array.from({ length: STEPS }, (_, i) => delayFor(i)).reduce((a, b) => a + b, 0);
 
 /** Phones hold their own reveal back this long so they don't spoil the big screen. */
-export const REVEAL_SUSPENSE_MS = LOCK_MS + REEL_MS;
+export const REVEAL_SUSPENSE_MS = REEL_MS;
 
 export default function GrandReveal({
   players,
@@ -29,7 +29,7 @@ export default function GrandReveal({
   rating?: number | null;
   onDone: () => void;
 }) {
-  const [phase, setPhase] = useState<"lock" | "reel" | "boom">("lock");
+  const [phase, setPhase] = useState<"reel" | "boom">("reel");
   const [step, setStep] = useState(0);
   const [muted, setMutedState] = useState(false);
   useEffect(() => setMutedState(isMuted()), []);
@@ -55,20 +55,14 @@ export default function GrandReveal({
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
     let alive = true;
-    playDrumroll(LOCK_MS + REEL_MS);
-    timers.push(
-      setTimeout(() => {
-        if (!alive) return;
-        setPhase("reel");
-        let at = 0;
-        for (let i = 0; i < STEPS; i++) {
-          at += delayFor(i);
-          const idx = i;
-          timers.push(setTimeout(() => alive && setStep(idx), at - delayFor(i)));
-        }
-        timers.push(setTimeout(() => alive && setPhase("boom"), at));
-      }, LOCK_MS),
-    );
+    playDrumroll(REEL_MS);
+    let at = 0;
+    for (let i = 0; i < STEPS; i++) {
+      const idx = i;
+      timers.push(setTimeout(() => alive && setStep(idx), at));
+      at += delayFor(i);
+    }
+    timers.push(setTimeout(() => alive && setPhase("boom"), at));
     return () => {
       alive = false;
       timers.forEach(clearTimeout);
@@ -84,11 +78,11 @@ export default function GrandReveal({
     const shoot = (x: number, angle: number) => confetti({ particleCount: 90, spread: 70, startVelocity: 55, angle, origin: { x, y: 0.75 }, colors });
     shoot(0, 60);
     shoot(1, 120);
-    const t1 = setTimeout(() => confetti({ particleCount: 160, spread: 360, startVelocity: 35, origin: { x: 0.5, y: 0.35 }, colors }), 450);
+    const t1 = setTimeout(() => confetti({ particleCount: 160, spread: 360, startVelocity: 35, origin: { x: 0.5, y: 0.35 }, colors }), 300);
     const t2 = setTimeout(() => {
       shoot(0, 60);
       shoot(1, 120);
-    }, 1100);
+    }, 700);
     const done = setTimeout(() => doneRef.current(), BOOM_MS);
     return () => {
       clearTimeout(t1);
@@ -128,18 +122,8 @@ export default function GrandReveal({
 
       <div className="relative z-10 flex flex-col items-center px-6 text-center">
         <AnimatePresence mode="wait">
-          {phase === "lock" && (
-            <motion.div key="lock" initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 1.3, opacity: 0 }} className="flex flex-col items-center">
-              <motion.p animate={{ rotate: [-8, 8, -8], scale: [1, 1.15, 1] }} transition={{ repeat: Infinity, duration: 0.5 }} className="text-[9rem] leading-none">
-                🔒
-              </motion.p>
-              <p className="title mt-4 text-5xl text-sunny sm:text-7xl">Everyone&apos;s locked in!</p>
-              <p className="mt-3 text-2xl text-white/70">Drumroll please…</p>
-            </motion.div>
-          )}
-
           {phase === "reel" && (
-            <motion.div key="reel" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center">
+            <motion.div key="reel" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.1 }} className="flex flex-col items-center">
               <p className="title text-4xl text-white/80 sm:text-5xl">And this video was sent by…</p>
               <div className="relative mt-8 flex h-[19rem] w-[19rem] items-center justify-center rounded-[2.5rem] border-8 border-night bg-black/40 shadow-chunky sm:h-[22rem] sm:w-[22rem]">
                 <motion.div key={step} initial={{ y: -40, opacity: 0.2, scale: 0.9 }} animate={{ y: 0, opacity: 1, scale: 1 }} transition={{ duration: 0.09 }} className="flex flex-col items-center gap-4">
@@ -171,7 +155,7 @@ export default function GrandReveal({
                 {winner.name}!
               </motion.p>
               {rating != null && (
-                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 1.2 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
+                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.5 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
                   ⭐ {Number(rating).toFixed(1)} <span className="text-xl text-white/60">/ 10</span>
                 </motion.div>
               )}

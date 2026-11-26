@@ -6,6 +6,7 @@ import Avatar from "@/components/Avatar";
 import Countdown from "@/components/Countdown";
 import { useGameState, useCountdown } from "@/components/useGameState";
 import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
+import { fmtPoints, SENDER_BONUS } from "@/lib/points";
 
 type Seat = { playerId: string; token: string };
 const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
@@ -192,7 +193,7 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
           <Avatar name={me?.name} color={me?.color} size={40} />
           <span className="font-display text-lg">{me?.name}</span>
         </div>
-        <span className="rounded-full bg-black/30 px-3 py-1 font-display">🕵️ {me?.score ?? 0}</span>
+        <span className="rounded-full bg-black/30 px-3 py-1 font-display">🕵️ {fmtPoints(me?.score ?? 0)}</span>
       </header>
 
       {s.paused && s.state !== "finished" && (
@@ -269,6 +270,7 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
             <>
               <p className="text-6xl">😎</p>
               <p className="title mt-2 text-2xl">Your video got revealed!</p>
+              <p className="mt-1 font-display text-lg text-mint">+{fmtPoints(SENDER_BONUS)} for sending it</p>
             </>
           ) : me?.correct ? (
             <>
@@ -291,7 +293,7 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
       {s.state === "finished" && (
         <>
           <Panel emoji="🎬" title="That's a wrap!">
-            You got <b>{me?.score ?? 0}</b> correct guess{me?.score === 1 ? "" : "es"} tonight. See you next time!
+            You scored <b>{fmtPoints(me?.score ?? 0)}</b> point{me?.score === 1 ? "" : "s"} tonight. See you next time!
           </Panel>
           {state.scores.length > 0 && (
             <div className="card mt-4">
@@ -302,7 +304,7 @@ function Controller({ code, seat, onKicked }: { code: string; seat: Seat; onKick
                     <span className="flex items-center gap-2">
                       <span className="w-5 text-white/50">{i + 1}</span> {sc.name}
                     </span>
-                    <span className="font-display text-lg">{sc.correct}</span>
+                    <span className="font-display text-lg">{fmtPoints(sc.points)}</span>
                   </li>
                 ))}
               </ol>

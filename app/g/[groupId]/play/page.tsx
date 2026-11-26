@@ -10,6 +10,7 @@ import Countdown from "@/components/Countdown";
 import EmbedPlayer from "@/components/EmbedPlayer";
 import GrandReveal from "@/components/GrandReveal";
 import { useGameState, useCountdown } from "@/components/useGameState";
+import { fmtPoints, SENDER_BONUS } from "@/lib/points";
 
 /** Real browser fullscreen where supported (Android, desktop, iPad). Must be called from a click. */
 function enterNativeFullscreen() {
@@ -57,7 +58,6 @@ function HostInner({ groupId }: { groupId: string }) {
   useEffect(() => {
     setWantFull(true);
     setFinishPending(false);
-    setReloadN(0);
   }, [s?.index]);
 
   // Grand reveal: only when we actually watch the round flip from playing to reveal
@@ -89,7 +89,12 @@ function HostInner({ groupId }: { groupId: string }) {
   async function act(action: string, extra: Record<string, string> = {}) {
     // Starting a video is the moderator's "play": go fullscreen right inside this click
     // (browsers only allow it during a user gesture, so it has to happen before any await).
-    if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) enterNativeFullscreen();
+    if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) {
+      // The Next button sits below the video, so the page may be scrolled. Bring it back to the top first: on phones a
+      // scrolled page behind the full-screen stage makes taps inside the video land in the wrong place.
+      window.scrollTo(0, 0);
+      enterNativeFullscreen();
+    }
     setBusy(true);
     setActionErr(null);
     const res = await fetch("/api/session/action", {
@@ -240,14 +245,13 @@ function HostInner({ groupId }: { groupId: string }) {
         <section className="grid flex-1 gap-6 px-6 pb-8 lg:grid-cols-[1fr_minmax(340px,420px)]">
           <div className="flex flex-col items-center justify-start gap-2">
             <EmbedPlayer
-              key={state.video.embedUrl}
               reloadKey={reloadN}
-              onReload={() => setReloadN((n) => n + 1)}
               embedUrl={state.video.embedUrl}
               platform={state.video.platform}
               sourceUrl={state.video.sourceUrl}
               aspect={state.video.aspect}
               blocked={state.video.blocked}
+              next={state.upNext}
               fullscreen={fullscreen}
               overlay={
                 <div className="text-white">
@@ -390,10 +394,11 @@ function RevealPanel({ state, instant = false }: { state: NonNullable<ReturnType
     const t = setTimeout(() => {
       setShown(true);
       confetti({ particleCount: 120, spread: 80, origin: { x: 0.8, y: 0.3 } });
-    }, 1600);
+    }, 600);
     return () => clearTimeout(t);
   }, [state.session.index]);
   const avg = state.video?.avgRating != null ? Number(state.video.avgRating) : null;
+  const senderScores = !!r.senderId && state.scores.some((sc) => sc.playerId === r.senderId);
   return (
     <div className="card">
       <AnimatePresence mode="wait">
@@ -407,6 +412,7 @@ function RevealPanel({ state, instant = false }: { state: NonNullable<ReturnType
             <div className="flex flex-col items-center text-center">
               <Avatar name={r.senderName} color={r.senderColor} size={96} ring />
               <p className="title mt-3 text-4xl text-sunny">{r.senderName}!</p>
+              {senderScores && <p className="mt-1 font-display text-lg text-mint">🕵️ +{fmtPoints(SENDER_BONUS)} for sending it</p>}
               <div className="mt-3 flex items-center gap-2 rounded-full bg-black/30 px-4 py-2 font-display text-2xl">
                 ⭐ {avg != null ? avg.toFixed(1) : "–"} <span className="text-base text-white/60">/ 10 · {state.video?.ratingCount ?? 0} ratings</span>
               </div>
@@ -417,7 +423,7 @@ function RevealPanel({ state, instant = false }: { state: NonNullable<ReturnType
                   key={g.playerId}
                   initial={instant ? { opacity: 0, x: 40 } : false}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: instant ? 0.9 + i * 0.28 : 0, type: "spring", bounce: 0.35 }}
+                  transition={{ delay: instant ? 0.2 + i * 0.1 : 0, type: "spring", bounce: 0.35 }}
                   className={`flex items-center justify-between rounded-xl px-3 py-1.5 ${g.correct ? "bg-mint/25" : "bg-black/25"}`}
                 >
                   <span className="flex items-center gap-2">
@@ -439,7 +445,7 @@ function RevealPanel({ state, instant = false }: { state: NonNullable<ReturnType
   );
 }
 
-function MiniScores({ scores }: { scores: { playerId: string; name: string; color: string; correct: number }[] }) {
+function MiniScores({ scores }: { scores: { playerId: string; name: string; color: string; points: number }[] }) {
   if (!scores.length) return null;
   return (
     <div className="card py-4">
@@ -451,7 +457,7 @@ function MiniScores({ scores }: { scores: { playerId: string; name: string; colo
               <span className="w-5 text-white/50">{i + 1}</span>
               <Avatar name={sc.name} color={sc.color} size={26} /> {sc.name}
             </span>
-            <span className="font-display text-lg">{sc.correct}</span>
+            <span className="font-display text-lg">{fmtPoints(sc.points)}</span>
           </li>
         ))}
       </ol>
@@ -476,11 +482,15 @@ function Finale({ state, groupId }: { state: NonNullable<ReturnType<typeof useGa
       <div className="mt-8 grid gap-6 md:grid-cols-3">
         <div className="card flex flex-col items-center text-center">
           <p className="label">Top detective tonight</p>
-          {top && top.correct > 0 ? (
+          {top && top.points > 0 ? (
             <>
               <Avatar name={top.name} color={top.color} size={96} ring />
               <p className="title mt-3 text-3xl">{top.name}</p>
-              <p className="text-white/70">{top.correct} correct guess{top.correct === 1 ? "" : "es"}</p>
+              <p className="font-display text-2xl text-sunny">{fmtPoints(top.points)} points</p>
+              <p className="text-sm text-white/70">
+                {top.correct} correct guess{top.correct === 1 ? "" : "es"}
+                {top.bonus > 0 ? ` + ${fmtPoints(top.bonus)} for sending videos` : ""}
+              </p>
             </>
           ) : (
             <p className="mt-6 text-white/70">Nobody guessed right. Sneaky team! 🕶</p>
@@ -510,7 +520,7 @@ function Finale({ state, groupId }: { state: NonNullable<ReturnType<typeof useGa
                   <span className="w-6 font-display text-xl">{["🥇", "🥈", "🥉"][i] || i + 1}</span>
                   <Avatar name={p.display_name} color={p.avatar_color} size={30} /> {p.display_name}
                 </span>
-                <span className="font-display text-lg">{p.correct}</span>
+                <span className="font-display text-lg">{fmtPoints(p.points)}</span>
               </li>
             ))}
           </ol>
