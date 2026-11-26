@@ -118,7 +118,7 @@ function Controller({
   submitAnswer: (rating: number | null, guessId: string | null) => Promise<SeatResult>;
   onKicked: () => void;
 }) {
-  const { state, refresh, fetchedAt } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000);
+  const { state, refresh, fetchedAt, reconnecting } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -179,6 +179,12 @@ function Controller({
         </div>
         <span className="rounded-full bg-black/30 px-3 py-1 font-display">🕵️ {fmtPoints(me?.score ?? 0)}</span>
       </header>
+
+      {reconnecting && (
+        <p className="mb-3 flex items-center justify-center gap-1.5 rounded-full bg-[#FFB84D]/20 px-3 py-1 text-center text-sm text-[#FFB84D]" role="status">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[#FFB84D]" aria-hidden /> Reconnecting…
+        </p>
+      )}
 
       {s.paused && s.state !== "finished" && (
         <Panel emoji="⏸" title="Game paused">

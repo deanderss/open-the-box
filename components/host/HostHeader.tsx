@@ -6,6 +6,7 @@ export default function HostHeader({
   state,
   origin,
   busy,
+  reconnecting,
   onPauseExit,
   onEnd,
   onFinish,
@@ -14,6 +15,7 @@ export default function HostHeader({
   state: GameState;
   origin: string;
   busy: boolean;
+  reconnecting?: boolean;
   onPauseExit: () => void;
   onEnd: () => void;
   onFinish: () => void;
@@ -25,6 +27,11 @@ export default function HostHeader({
         <span className="text-2xl">{state.group?.emoji}</span> {state.group?.name}
       </Link>
       <div className="flex items-center gap-4">
+        {reconnecting && (
+          <span className="flex items-center gap-1.5 rounded-full bg-[#FFB84D]/20 px-3 py-1 text-sm text-[#FFB84D]" role="status">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-[#FFB84D]" aria-hidden /> Reconnecting…
+          </span>
+        )}
         {s.state !== "finished" && (
           <div className="rounded-2xl bg-black/30 px-4 py-2 text-center">
             <span className="text-sm text-white/60">Join at </span>

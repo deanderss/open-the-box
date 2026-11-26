@@ -30,17 +30,36 @@ export type GameState = {
   viewerValid: boolean;
 };
 
+/**
+ * Deep-equal, ignoring the two fields that legitimately differ on every single poll (the live countdown
+ * snapshot) — so a poll where nothing actually happened doesn't force a full re-render of the page.
+ */
+function sameExceptTimers(a: GameState | null, b: GameState): boolean {
+  if (!a) return false;
+  const strip = (x: GameState) => ({ ...x, session: { ...x.session, remainingMs: 0, serverNow: 0 } });
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+}
+
 /** Polls the state endpoint and refetches instantly on realtime nudges. */
 export function useGameState(params: { code?: string | null; sessionId?: string | null; playerId?: string | null; token?: string | null }, pollMs = 2500) {
   const [state, setState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState(Date.now());
+  const [reconnecting, setReconnecting] = useState(false);
   const inflight = useRef(false);
+  const dirty = useRef(false); // a realtime nudge arrived while a fetch was already in flight
+  const misses = useRef(0);
+  const lastRaw = useRef<GameState | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveState = useRef<GameState["session"]["state"] | undefined>(undefined);
   const { code, sessionId, playerId, token } = params;
 
   const refresh = useCallback(async () => {
     if (!code && !sessionId) return;
-    if (inflight.current) return;
+    if (inflight.current) {
+      dirty.current = true; // coalesce: whoever is already in flight will pick this up when it finishes
+      return;
+    }
     inflight.current = true;
     try {
       const q = new URLSearchParams();
@@ -51,36 +70,77 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
       // or browser history.
       const res = await fetch(`/api/session/state?${q}`, { cache: "no-store", headers: playerId && token ? { "x-otb-token": token } : undefined });
       const data = await res.json();
-      if (!res.ok) setError(data.error || "Error");
-      else {
-        setState(data);
-        setFetchedAt(Date.now());
+      if (!res.ok) {
+        misses.current++;
+        setError(data.error || "Error");
+      } else {
+        misses.current = 0;
+        setReconnecting(false);
+        liveState.current = data.session.state;
+        if (!sameExceptTimers(lastRaw.current, data)) {
+          setState(data);
+          setFetchedAt(Date.now());
+        }
+        lastRaw.current = data;
         setError(null);
       }
     } catch {
+      misses.current++;
       /* transient */
     } finally {
       inflight.current = false;
+      if (misses.current >= 2 || (typeof navigator !== "undefined" && navigator.onLine === false)) setReconnecting(true);
+      if (dirty.current) {
+        dirty.current = false;
+        refresh();
+      }
     }
   }, [code, sessionId, playerId, token]);
 
+  // Self-rescheduling poll instead of a fixed setInterval: a longer gap in the lobby (nothing to watch for
+  // yet), none at all once the tab is hidden or the game is finished (a realtime nudge still refetches
+  // either way), and the wait always restarts fresh right after a fetch finishes — so a realtime-triggered
+  // refresh never leaves an almost-immediate duplicate poll right behind it.
+  const schedule = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (typeof document !== "undefined" && document.hidden) return;
+    if (liveState.current === "finished") return;
+    const ms = liveState.current === "lobby" ? Math.max(pollMs, 4000) : pollMs;
+    timer.current = setTimeout(async () => {
+      await refresh();
+      schedule();
+    }, ms);
+  }, [pollMs, refresh]);
+
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, pollMs);
-    return () => clearInterval(t);
-  }, [refresh, pollMs]);
+    refresh().then(schedule);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) refresh();
+      schedule();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh, schedule]);
 
   const sid = state?.session.id;
   useEffect(() => {
     if (!sid) return;
     const sb = supabaseBrowser();
-    const ch = sb.channel(`session-${sid}`).on("broadcast", { event: "update" }, () => refresh()).subscribe();
+    const ch = sb
+      .channel(`session-${sid}`)
+      .on("broadcast", { event: "update" }, () => refresh().then(schedule))
+      .subscribe();
     return () => {
       sb.removeChannel(ch);
     };
-  }, [sid, refresh]);
+  }, [sid, refresh, schedule]);
 
-  return { state, error, refresh, fetchedAt };
+  return { state, error, refresh, fetchedAt, reconnecting };
 }
 
 /** Live countdown derived from the last server snapshot. */

@@ -14,7 +14,7 @@ import Finale from "@/components/host/Finale";
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
   const sessionId = useSearchParams().get("session");
-  const { state, error, refresh, fetchedAt } = useGameState({ sessionId }, 2000);
+  const { state, error, refresh, fetchedAt, reconnecting } = useGameState({ sessionId }, 2000);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [reloadN, setReloadN] = useState(0); // bumped to remount the video iframe ("Reload video")
@@ -65,7 +65,8 @@ function HostInner({ groupId }: { groupId: string }) {
     }
   }, [remaining, s?.state, s?.index, refresh]);
 
-  async function act(action: string, extra: Record<string, string> = {}) {
+  /** Returns whether the action actually succeeded, so callers (e.g. "pause & exit") can decide what to do next. */
+  async function act(action: string, extra: Record<string, string> = {}): Promise<boolean> {
     // Starting a video is the moderator's "play": go fullscreen right inside this click
     // (browsers only allow it during a user gesture, so it has to happen before any await).
     if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) {
@@ -76,24 +77,35 @@ function HostInner({ groupId }: { groupId: string }) {
     }
     setBusy(true);
     setActionErr(null);
-    // next/skip/reveal carry the index the host screen was looking at, so a double-tap (or two moderators on
-    // the same screen) can't advance past a video twice: the server rejects it if the game already moved on.
-    const payload: Record<string, unknown> = { sessionId, action, ...extra };
-    if (s && (action === "next" || action === "skip" || action === "reveal")) payload.expectIndex = s.index;
-    const res = await fetch("/api/session/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const d = await res.json();
-    if (!res.ok) setActionErr(d.error);
-    await refresh();
-    setBusy(false);
+    try {
+      // next/skip/reveal carry the index the host screen was looking at, so a double-tap (or two moderators on
+      // the same screen) can't advance past a video twice: the server rejects it if the game already moved on.
+      const payload: Record<string, unknown> = { sessionId, action, ...extra };
+      if (s && (action === "next" || action === "skip" || action === "reveal")) payload.expectIndex = s.index;
+      const res = await fetch("/api/session/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionErr(d.error || "Something went wrong");
+        return false;
+      }
+      return true;
+    } catch {
+      setActionErr("Couldn't reach the server — check your connection and try again");
+      return false;
+    } finally {
+      // Always refresh and always clear busy, even if the request never made it out (offline, timeout, etc.)
+      await refresh();
+      setBusy(false);
+    }
   }
 
   async function pauseAndExit() {
-    await act("pause");
-    router.push(`/g/${groupId}`);
+    const ok = await act("pause");
+    if (ok) router.push(`/g/${groupId}`); // if the pause itself failed, stay put rather than walk away from a game that's still running
   }
 
   /** "Finished": wrap up on the current video. Unplayed videos stay in the box for the next game. */
@@ -131,7 +143,7 @@ function HostInner({ groupId }: { groupId: string }) {
 
   return (
     <main className="flex min-h-screen flex-col">
-      <HostHeader groupId={groupId} state={state} origin={origin} busy={busy} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
+      <HostHeader groupId={groupId} state={state} origin={origin} busy={busy} reconnecting={reconnecting} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
 
       {s.state === "lobby" && <LobbyView state={state} joinUrl={joinUrl} busy={busy} onBegin={() => act("begin")} onKick={kick} />}
