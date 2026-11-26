@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import confetti from "canvas-confetti";
+import { confettiShape, fireConfetti } from "@/lib/confetti";
 import Avatar from "@/components/Avatar";
 import BoxMascot, { Mood } from "@/components/BoxMascot";
 
@@ -88,10 +88,10 @@ function platformOf(u: string) {
   return u.trim() ? "❓" : "🔗";
 }
 
-function stinkRain() {
-  const fly = confetti.shapeFromText ? confetti.shapeFromText({ text: "🪰", scalar: 2 }) : undefined;
-  const poo = confetti.shapeFromText ? confetti.shapeFromText({ text: "💨", scalar: 2 }) : undefined;
-  confetti({ particleCount: 25, spread: 120, startVelocity: 25, gravity: 0.6, scalar: 2, origin: { y: 0.3 }, ...(fly && poo ? { shapes: [fly, poo] } : { colors: ["#7a8b3a", "#5b4a2e"] }) });
+async function stinkRain() {
+  const fly = await confettiShape("🪰");
+  const poo = await confettiShape("💨");
+  fireConfetti({ particleCount: 25, spread: 120, startVelocity: 25, gravity: 0.6, scalar: 2, origin: { y: 0.3 }, ...(fly && poo ? { shapes: [fly, poo] } : { colors: ["#7a8b3a", "#5b4a2e"] }) });
 }
 
 export default function SubmitPage({ params }: { params: { token: string } }) {
@@ -161,7 +161,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
     if (verdictTimer.current) clearTimeout(verdictTimer.current); // the "try again" button can call this again before the first one fires
     verdictTimer.current = setTimeout(() => {
       setShowVerdict(true);
-      if (v === "rock") confetti({ particleCount: 180, spread: 100, origin: { y: 0.35 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
+      if (v === "rock") fireConfetti({ particleCount: 180, spread: 100, origin: { y: 0.35 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
       if (v === "stink") stinkRain();
       if (navigator.vibrate) navigator.vibrate(v === "stink" ? [80, 60, 80] : 60);
     }, 1400);
@@ -252,7 +252,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
     );
   if (!group)
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 text-white/60">
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 text-white/70">
         <BoxMascot size={110} />
         Finding the box…
       </main>
@@ -276,7 +276,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
         {!me && phase === "form" && (
           <motion.div key="who" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }} className="card mt-6">
             <p className="title text-center text-2xl">Who goes there? 👀</p>
-            <p className="mb-4 mt-1 text-center text-sm text-white/60">Pick your name. It stays secret until the big reveal 🤫</p>
+            <p className="mb-4 mt-1 text-center text-sm text-white/70">Pick your name. It stays secret until the big reveal 🤫</p>
             <div className="grid grid-cols-2 gap-3">
               {roster.map((p, i) => (
                 <motion.button
@@ -307,7 +307,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 <Avatar name={me.name} color={me.color} size={34} />
                 <span className="font-display text-lg">Sneaky {me.name}</span>
               </div>
-              <button type="button" className="text-sm text-white/60 underline" onClick={() => setPlayerId(null)}>
+              <button type="button" className="text-sm text-white/70 underline" onClick={() => setPlayerId(null)}>
                 Not you?
               </button>
             </div>
@@ -353,7 +353,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                   + Add another
                 </button>
               )}
-              <p className="text-center text-xs text-white/50">Tip: paste a bunch of links at once and they&apos;ll split up automatically.</p>
+              <p className="text-center text-xs text-white/70">Tip: paste a bunch of links at once and they&apos;ll split up automatically.</p>
             </div>
 
             {uploadsOn && (
@@ -365,7 +365,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                   <span className="text-xl">🎞</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{f.name}</span>
-                    <span className="block text-xs text-white/50">{(f.size / 1048576).toFixed(1)} MB</span>
+                    <span className="block text-xs text-white/70">{(f.size / 1048576).toFixed(1)} MB</span>
                   </span>
                   <button type="button" className="btn btn-ghost btn-sm px-3" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label="Remove video">
                     ✕
@@ -378,7 +378,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 </button>
               )}
               {fileMsg && <p className="rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-xs text-[#FFB3B3]">{fileMsg}</p>}
-              <p className="text-center text-xs text-white/50">Up to {MAX_UPLOAD_MB} MB each (about 30 seconds of phone video). It plays once in the game, then it&apos;s deleted.</p>
+              <p className="text-center text-xs text-white/70">Up to {MAX_UPLOAD_MB} MB each (about 30 seconds of phone video). It plays once in the game, then it&apos;s deleted.</p>
             </div>
             )}
 
@@ -401,7 +401,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
               )}
             </div>
             {files.length > 0 && <p className="mt-3 font-display text-lg text-sunny">{uploadLabel} {Math.round(uploadPct)}%</p>}
-            {files.length > 0 && <p className="text-xs text-white/50">Keep this screen open until it finishes.</p>}
+            {files.length > 0 && <p className="text-xs text-white/70">Keep this screen open until it finishes.</p>}
             <AnimatePresence mode="wait">
               <motion.p key={scanMsg} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="mt-4 font-display text-lg text-white/80">
                 {scanMsg}
@@ -423,7 +423,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                       <p className="mt-2 text-white/70">{verdictSub}</p>
                     </motion.div>
                   ) : (
-                    <motion.p key="dots" className="title mt-2 text-4xl text-white/60" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 0.9 }}>
+                    <motion.p key="dots" className="title mt-2 text-4xl text-white/70" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 0.9 }}>
                       …
                     </motion.p>
                   )}
@@ -431,7 +431,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                 <p className="mt-4 rounded-2xl bg-black/30 px-3 py-2 font-display text-lg text-sunny">
                   📦 {added} video{added === 1 ? "" : "s"} dropped in the box
                 </p>
-                <p className="mt-3 text-[11px] text-white/40">*The &quot;AI&quot; is a cardboard box. It has no eyes. Your team decides for real at the meeting.</p>
+                <p className="mt-3 text-xs text-white/70">*The &quot;AI&quot; is a cardboard box. It has no eyes. Your team decides for real at the meeting.</p>
               </div>
             ) : (
               <div className="card text-center">
@@ -446,7 +446,7 @@ export default function SubmitPage({ params }: { params: { token: string } }) {
                   <span className="text-lg">{STATUS[r.status].icon}</span>
                   <span className="min-w-0">
                     <span className="block font-semibold">{r.message || STATUS[r.status].text}</span>
-                    <span className="block truncate text-xs text-white/50">{r.url}</span>
+                    <span className="block truncate text-xs text-white/70">{r.url}</span>
                   </span>
                 </motion.li>
               ))}

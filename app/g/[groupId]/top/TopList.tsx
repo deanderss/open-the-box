@@ -21,17 +21,17 @@ export default function TopList({ items }: { items: Item[] }) {
         {items.map((v, i) => (
           <li key={v.id}>
             <button onClick={() => setOpen(v)} className="card flex w-full items-center gap-4 p-4 text-left transition hover:-translate-y-0.5">
-              <span className="w-12 text-center font-display text-3xl">{["🥇", "🥈", "🥉"][i] || <span className="text-white/60">{i + 1}</span>}</span>
+              <span className="w-12 text-center font-display text-3xl">{["🥇", "🥈", "🥉"][i] || <span className="text-white/70">{i + 1}</span>}</span>
               <div className="min-w-0 flex-1">
                 <p className="font-display text-lg">{PLATFORM[v.platform] || v.platform}</p>
                 <p className="flex items-center gap-2 text-sm text-white/70">
                   <Avatar name={v.sender} color={v.senderColor} size={22} /> sent by {v.sender}
-                  {v.playedAt && <span className="text-white/40">· {new Date(v.playedAt).toLocaleDateString()}</span>}
+                  {v.playedAt && <span className="text-white/70">· {new Date(v.playedAt).toLocaleDateString()}</span>}
                 </p>
               </div>
               <div className="text-right">
                 <p className="font-display text-3xl text-sunny">⭐ {v.avg.toFixed(1)}</p>
-                <p className="text-xs text-white/50">{v.count} ratings</p>
+                <p className="text-xs text-white/70">{v.count} ratings</p>
               </div>
               <span className="btn btn-sky btn-sm hidden sm:inline-flex">▶ Watch</span>
             </button>

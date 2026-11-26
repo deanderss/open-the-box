@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Fredoka, Nunito } from "next/font/google";
+import Providers from "@/components/Providers";
 import "./globals.css";
 
 const display = Fredoka({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display" });
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
   title: "Open the Box 📦",
   description: "Team video party game — send in videos, rate them, guess who sent them.",
 };
-export const viewport: Viewport = { width: "device-width", initialScale: 1, maximumScale: 1, viewportFit: "cover", themeColor: "#1B0F3B" };
+// No maximumScale: pinch-to-zoom stays available (a fixed max scale is an accessibility anti-pattern —
+// some players genuinely need to zoom in to read small text).
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#1B0F3B" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -23,7 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="dns-prefetch" href="https://scontent.cdninstagram.com" />
         <link rel="dns-prefetch" href="https://i.ytimg.com" />
       </head>
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

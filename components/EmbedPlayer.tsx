@@ -246,7 +246,7 @@ function Slot({
               Open in the {site} app ↗
             </button>
           )}
-          <div className="flex flex-col items-center gap-1 text-xs text-white/50">
+          <div className="flex flex-col items-center gap-1 text-xs text-white/70">
             {sourceUrl && (
               <a className="underline hover:text-white/80" href={sourceUrl} target="_blank" rel="noreferrer">
                 Open in the browser instead
@@ -292,7 +292,7 @@ function Slot({
         <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
           <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
-          <p className="max-w-[16rem] text-sm text-white/60">
+          <p className="max-w-[16rem] text-sm text-white/70">
             {slow ? "Slow connection, or the site is being fussy." : `The first one can take a few seconds. Tap play when it appears.`}
           </p>
           {slow && (
@@ -440,7 +440,7 @@ export default function EmbedPlayer({
       )}
 
       {sourceUrl && !fullscreen && !blocked && !isUpload && (
-        <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/50 underline hover:text-white/80">
+        <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/70 underline hover:text-white/80">
           Not loading? Open on {site} ↗
         </a>
       )}

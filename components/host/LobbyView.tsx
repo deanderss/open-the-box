@@ -43,15 +43,21 @@ export default function LobbyView({
                   animate={{ scale: 1, rotate: 0 }}
                   exit={{ scale: 0 }}
                   title="Click to remove"
+                  aria-label={`Remove ${p.name}`}
                   onClick={() => onKick(p.id, p.name)}
                   className="flex flex-col items-center gap-1"
                 >
-                  <Avatar name={p.name} color={p.color} size={64} />
-                  <span className="text-sm font-semibold">{p.name}</span>
+                  <span className="relative inline-block">
+                    <Avatar name={p.name} color={p.color} size={64} />
+                    <span aria-hidden className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-[#FF5E5E] text-sm font-bold leading-none text-white shadow-chunkySm">
+                      ×
+                    </span>
+                  </span>
+                  <span className="max-w-[72px] break-words text-sm font-semibold">{p.name}</span>
                 </motion.button>
               ))}
             </AnimatePresence>
-            {state.players.length === 0 && <p className="text-white/50">Waiting for players…</p>}
+            {state.players.length === 0 && <p className="text-white/70">Waiting for players…</p>}
           </div>
           <button className="btn btn-yellow mt-6 w-full text-2xl" disabled={busy || state.players.length === 0} onClick={onBegin}>
             ▶ Start the show

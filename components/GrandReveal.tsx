@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import confetti from "canvas-confetti";
+import { fireConfetti } from "@/lib/confetti";
 import Avatar from "./Avatar";
 import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx";
 
@@ -13,6 +13,19 @@ const BOOM_MS = 1700; // how long the winner screen stays up before the results 
 
 /** Delay before flip i: fast at first, easing off so the last name lands with a little suspense. */
 const delayFor = (i: number) => 60 + 320 * (i / (STEPS - 1)) ** 3;
+
+/** The reel and the winner card both show one name at a huge size — long ones need to shrink to still fit on one line. */
+function reelNameClass(name: string) {
+  if (name.length <= 10) return "text-4xl sm:text-5xl";
+  if (name.length <= 16) return "text-3xl sm:text-4xl";
+  return "text-2xl sm:text-3xl";
+}
+function bigNameClass(name: string) {
+  if (name.length <= 6) return "text-7xl sm:text-9xl";
+  if (name.length <= 9) return "text-6xl sm:text-8xl";
+  if (name.length <= 13) return "text-5xl sm:text-7xl";
+  return "text-4xl sm:text-5xl";
+}
 const REEL_MS = Array.from({ length: STEPS }, (_, i) => delayFor(i)).reduce((a, b) => a + b, 0);
 
 /** Phones hold their own reveal back this long so they don't spoil the big screen. */
@@ -75,10 +88,10 @@ export default function GrandReveal({
     if (phase !== "boom") return;
     playFanfare();
     const colors = ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#B07CFF", "#FF8A3D"];
-    const shoot = (x: number, angle: number) => confetti({ particleCount: 90, spread: 70, startVelocity: 55, angle, origin: { x, y: 0.75 }, colors });
+    const shoot = (x: number, angle: number) => fireConfetti({ particleCount: 90, spread: 70, startVelocity: 55, angle, origin: { x, y: 0.75 }, colors });
     shoot(0, 60);
     shoot(1, 120);
-    const t1 = setTimeout(() => confetti({ particleCount: 160, spread: 360, startVelocity: 35, origin: { x: 0.5, y: 0.35 }, colors }), 300);
+    const t1 = setTimeout(() => fireConfetti({ particleCount: 160, spread: 360, startVelocity: 35, origin: { x: 0.5, y: 0.35 }, colors }), 300);
     const t2 = setTimeout(() => {
       shoot(0, 60);
       shoot(1, 120);
@@ -108,15 +121,17 @@ export default function GrandReveal({
         <button
           className="btn btn-ghost btn-sm"
           title={muted ? "Sound off" : "Sound on"}
+          aria-label={muted ? "Unmute" : "Mute"}
+          aria-pressed={muted}
           onClick={() => {
             setMuted(!muted);
             setMutedState(!muted);
           }}
         >
-          {muted ? "🔇" : "🔊"}
+          <span aria-hidden>{muted ? "🔇" : "🔊"}</span>
         </button>
         <button className="btn btn-ghost btn-sm" onClick={() => doneRef.current()}>
-          Skip ›
+          Skip <span aria-hidden>›</span>
         </button>
       </div>
 
@@ -128,7 +143,7 @@ export default function GrandReveal({
               <div className="relative mt-8 flex h-[19rem] w-[19rem] items-center justify-center rounded-[2.5rem] border-8 border-night bg-black/40 shadow-chunky sm:h-[22rem] sm:w-[22rem]">
                 <motion.div key={step} initial={{ y: -40, opacity: 0.2, scale: 0.9 }} animate={{ y: 0, opacity: 1, scale: 1 }} transition={{ duration: 0.09 }} className="flex flex-col items-center gap-4">
                   <Avatar name={current.name} color={current.color} size={150} />
-                  <p className="title text-4xl sm:text-5xl">{current.name}</p>
+                  <p className={`title max-w-[85%] break-words text-center ${reelNameClass(current.name)}`}>{current.name}</p>
                 </motion.div>
               </div>
               <motion.p animate={{ opacity: [1, 0.4, 1] }} transition={{ repeat: Infinity, duration: 0.6 }} className="mt-6 font-display text-2xl text-sunny">
@@ -139,7 +154,7 @@ export default function GrandReveal({
 
           {phase === "boom" && (
             <motion.div key="boom" className="flex flex-col items-center">
-              <motion.div className="pointer-events-none fixed inset-0 bg-white" initial={{ opacity: 0.95 }} animate={{ opacity: 0 }} transition={{ duration: 0.7 }} />
+              <motion.div className="pointer-events-none fixed inset-0 bg-white" initial={{ opacity: 0.5 }} animate={{ opacity: 0 }} transition={{ duration: 0.7 }} />
               <motion.p initial={{ y: -30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }} className="font-display text-3xl uppercase tracking-[0.4em] text-white/80">
                 Sent by
               </motion.p>
@@ -150,13 +165,13 @@ export default function GrandReveal({
                 initial={{ scale: 0.3, opacity: 0 }}
                 animate={{ scale: [0.3, 1.2, 1], opacity: 1 }}
                 transition={{ delay: 0.35, duration: 0.6 }}
-                className="title mt-6 text-7xl text-sunny drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] sm:text-9xl"
+                className={`title mt-6 max-w-[92vw] break-words text-center text-sunny drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] ${bigNameClass(winner.name)}`}
               >
                 {winner.name}!
               </motion.p>
               {rating != null && (
                 <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
-                  ⭐ {Number(rating).toFixed(1)} <span className="text-xl text-white/60">/ 10</span>
+                  ⭐ {Number(rating).toFixed(1)} <span className="text-xl text-white/70">/ 10</span>
                 </motion.div>
               )}
             </motion.div>

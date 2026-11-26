@@ -86,7 +86,7 @@ export default async function LeaderboardPage({ params, searchParams }: { params
         <p className="mt-1 text-white/70">
           {group.emoji} {group.name}: who&apos;s best at guessing the sender?
         </p>
-        <p className="text-sm text-white/50">1 point per correct guess, plus half a point for every video you sent that got played.</p>
+        <p className="text-sm text-white/70">1 point per correct guess, plus half a point for every video you sent that got played.</p>
         <div className="mt-4 inline-flex rounded-2xl bg-black/30 p-1">
           <Link href="?view=all" className={`rounded-xl px-4 py-2 font-display ${view === "all" ? "bg-mint text-night" : "text-white/70"}`}>
             All time
@@ -98,7 +98,7 @@ export default async function LeaderboardPage({ params, searchParams }: { params
         <div className="card mt-6 p-0">
           <table className="w-full">
             <thead>
-              <tr className="text-left text-sm uppercase tracking-widest text-white/50">
+              <tr className="text-left text-sm uppercase tracking-widest text-white/70">
                 <th className="p-4">#</th>
                 <th className="p-4">Player</th>
                 <th className="p-4 text-right">Points</th>
@@ -126,7 +126,7 @@ export default async function LeaderboardPage({ params, searchParams }: { params
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-white/60">
+                  <td colSpan={7} className="p-8 text-center text-white/70">
                     No guesses yet. Open the box to start the competition!
                   </td>
                 </tr>

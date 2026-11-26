@@ -31,10 +31,10 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
       <div className="card mt-6 border-2 border-sunny/40">
         <div className="flex items-center justify-between">
           <p className="title text-2xl">📬 Pending requests</p>
-          <span className={`rounded-full px-3 py-1 font-bold ${pending.length ? "bg-bubble text-white" : "bg-black/30 text-white/60"}`}>{pending.length}</span>
+          <span className={`rounded-full px-3 py-1 font-bold ${pending.length ? "bg-bubble text-white" : "bg-black/30 text-white/70"}`}>{pending.length}</span>
         </div>
         {pending.length === 0 ? (
-          <p className="mt-3 text-white/60">Nobody is waiting. You&apos;ll get an email when someone asks to join.</p>
+          <p className="mt-3 text-white/70">Nobody is waiting. You&apos;ll get an email when someone asks to join.</p>
         ) : (
           <ul className="mt-4 space-y-3">
             {pending.map((r) => (
@@ -43,10 +43,10 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
                   <div className="min-w-0">
                     <p className="font-display text-lg">{r.name}</p>
                     <p className="break-all text-sm text-white/80">{r.email}</p>
-                    <p className="mt-1 text-xs text-white/50">
+                    <p className="mt-1 text-xs text-white/70">
                       Requested {fmt(r.createdAt)} · IP {r.ip || "unknown"}
                     </p>
-                    {r.userAgent && <p className="mt-0.5 break-words text-xs text-white/40">{r.userAgent}</p>}
+                    {r.userAgent && <p className="mt-0.5 break-words text-xs text-white/70">{r.userAgent}</p>}
                   </div>
                   <div className="flex gap-2">
                     <button className="btn btn-mint btn-sm" disabled={busyId === r.id} onClick={() => decide(r, "approve")}>
@@ -93,7 +93,7 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
       </div>
 
       <h2 className="title mt-8 text-2xl">Moderators</h2>
-      <p className="text-sm text-white/60">Click a moderator to see their boxes and who&apos;s in them, or to suspend or remove them.</p>
+      <p className="text-sm text-white/70">Click a moderator to see their boxes and who&apos;s in them, or to suspend or remove them.</p>
       <ul className="mt-3 space-y-3">
         {mods.map((m) => (
           <li key={m.id}>
@@ -103,7 +103,7 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
                   {m.name} {m.isAdmin && <span className="ml-1 rounded-full bg-sunny px-2 py-0.5 text-xs text-night">admin</span>}
                   {m.suspended && <span className="ml-1 rounded-full bg-[#FF5E5E] px-2 py-0.5 text-xs text-white">suspended</span>}
                 </p>
-                <p className="break-all text-sm text-white/60">
+                <p className="break-all text-sm text-white/70">
                   {m.email} · owns {m.boxes} box{m.boxes === 1 ? "" : "es"} · joined {new Date(m.createdAt).toLocaleDateString()}
                 </p>
               </div>
@@ -120,8 +120,8 @@ export default function AdminPanel({ meId, cap, mods, requests }: { meId: string
             {history.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-black/20 px-4 py-3 text-sm">
                 <div className="min-w-0">
-                  <span className="font-bold">{r.name}</span> <span className="break-all text-white/60">{r.email}</span>
-                  <p className="text-xs text-white/40">
+                  <span className="font-bold">{r.name}</span> <span className="break-all text-white/70">{r.email}</span>
+                  <p className="text-xs text-white/70">
                     Requested {fmt(r.createdAt)}
                     {r.decidedAt ? ` · decided ${fmt(r.decidedAt)}` : ""} · IP {r.ip || "unknown"}
                   </p>

@@ -37,7 +37,7 @@ export default function HostHeader({
           // Once the game is under way the join code matters a lot less (everyone who's going to has
           // already joined), so on small screens we give that space back to the Reveal/Skip/Pause controls.
           <div className={`rounded-2xl bg-black/30 px-4 py-2 text-center ${started ? "hidden md:block" : ""}`}>
-            <span className="text-sm text-white/60">Join at </span>
+            <span className="text-sm text-white/70">Join at </span>
             <span className="font-mono text-white/90">{origin.replace(/^https?:\/\//, "")}/join</span>
             <span className="ml-3 font-display text-2xl tracking-[0.3em] text-sunny">{s.code}</span>
           </div>

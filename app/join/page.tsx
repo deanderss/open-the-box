@@ -103,7 +103,7 @@ function JoinInner() {
           <p className="mb-4 mt-2 text-center text-white/70">Tap your name</p>
           {kickedMsg && <p className="mb-3 text-center text-sm text-[#FFD23F]">{kickedMsg}</p>}
           {err && <p className="mb-3 text-center text-sm text-[#FFB3B3]">{err}</p>}
-          {looking && <p className="mb-3 text-center text-sm text-white/60">Joining…</p>}
+          {looking && <p className="mb-3 text-center text-sm text-white/70">Joining…</p>}
           <div className="grid grid-cols-2 gap-3">
             {(roster || []).map((p) => (
               <button
@@ -112,11 +112,12 @@ function JoinInner() {
                 onClick={() => handlePick(p.id)}
                 className="flex items-center gap-2 rounded-2xl bg-black/30 p-3 text-left font-semibold active:scale-95 disabled:opacity-30"
               >
-                <Avatar name={p.name} color={p.color} size={36} /> {p.name}
+                <Avatar name={p.name} color={p.color} size={36} /> <span className="break-words">{p.name}</span>
+                {p.taken && <span className="text-sm font-normal text-white/70">(taken)</span>}
               </button>
             ))}
           </div>
-          <button className="mt-4 w-full text-sm text-white/50 underline" onClick={() => setConfirmedCode(null)}>
+          <button className="mt-4 w-full text-sm text-white/70 underline" onClick={() => setConfirmedCode(null)}>
             Different code
           </button>
         </div>
@@ -186,7 +187,7 @@ function Controller({
     if (state && !state.viewerValid && state.session.state !== "finished") onKicked();
   }, [state, onKicked]);
 
-  if (!state || !s) return <main className="flex min-h-screen items-center justify-center text-white/60">Connecting…</main>;
+  if (!state || !s) return <main className="flex min-h-screen items-center justify-center text-white/70">Connecting…</main>;
   const me = state.me;
 
   async function lockIn() {
@@ -264,6 +265,7 @@ function Controller({
                 <button
                   key={n}
                   onClick={() => setRating(n)}
+                  aria-pressed={rating === n}
                   className={`aspect-square rounded-2xl font-display text-2xl font-bold shadow-chunkySm transition active:translate-y-1 ${rating === n ? "bg-sunny text-night scale-110" : "bg-white/10"}`}
                 >
                   {n}
@@ -278,6 +280,7 @@ function Controller({
                 <button
                   key={p.id}
                   onClick={() => setGuess(p.id)}
+                  aria-pressed={guess === p.id}
                   className={`flex items-center gap-2 rounded-2xl p-2 text-left font-semibold transition ${guess === p.id ? "bg-bubble ring-4 ring-sunny" : "bg-black/30"}`}
                 >
                   <Avatar name={p.name} color={p.color} size={30} /> <span className="truncate">{p.name}</span>
@@ -325,7 +328,7 @@ function Controller({
           <p className="mt-3 text-white/80">
             It was sent by <span className="font-display text-sunny">{state.reveal.senderName}</span>
           </p>
-          <p className="mt-4 text-sm text-white/60">Watch the big screen for the next video…</p>
+          <p className="mt-4 text-sm text-white/70">Watch the big screen for the next video…</p>
         </motion.div>
       )}
 
@@ -341,7 +344,7 @@ function Controller({
                 {state.scores.slice(0, 8).map((sc, i) => (
                   <li key={sc.playerId} className={`flex items-center justify-between rounded-xl px-2 py-1 ${sc.playerId === me?.playerId ? "bg-white/15" : ""}`}>
                     <span className="flex items-center gap-2">
-                      <span className="w-5 text-white/50">{i + 1}</span> {sc.name}
+                      <span className="w-5 text-white/70">{i + 1}</span> {sc.name}
                     </span>
                     <span className="font-display text-lg">{fmtPoints(sc.points)}</span>
                   </li>

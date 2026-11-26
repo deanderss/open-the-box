@@ -1,10 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import confetti from "canvas-confetti";
+import { fireConfetti } from "@/lib/confetti";
 import Avatar from "@/components/Avatar";
 import type { GameState } from "@/components/useGameState";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
+
+/** The sender's name is shown at a big, celebratory size — a long one needs to shrink to still fit on one line. */
+function senderNameClass(name: string) {
+  if (name.length <= 10) return "text-4xl";
+  if (name.length <= 16) return "text-3xl";
+  return "text-2xl";
+}
 
 export default function RevealPanel({ state, instant = false }: { state: GameState; instant?: boolean }) {
   const [shown, setShown] = useState(instant);
@@ -18,7 +25,7 @@ export default function RevealPanel({ state, instant = false }: { state: GameSta
     setShown(false);
     const t = setTimeout(() => {
       setShown(true);
-      confetti({ particleCount: 120, spread: 80, origin: { x: 0.8, y: 0.3 } });
+      fireConfetti({ particleCount: 120, spread: 80, origin: { x: 0.8, y: 0.3 } });
     }, 600);
     return () => clearTimeout(t);
   }, [state.session.index, instant]);
@@ -36,10 +43,10 @@ export default function RevealPanel({ state, instant = false }: { state: GameSta
           <motion.div key="who" initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", bounce: 0.5 }}>
             <div className="flex flex-col items-center text-center">
               <Avatar name={r.senderName} color={r.senderColor} size={96} ring />
-              <p className="title mt-3 text-4xl text-sunny">{r.senderName}!</p>
+              <p className={`title mt-3 max-w-full break-words text-sunny ${senderNameClass(r.senderName)}`}>{r.senderName}!</p>
               {senderScores && <p className="mt-1 font-display text-lg text-mint">🕵️ +{fmtPoints(SENDER_BONUS)} for sending it</p>}
               <div className="mt-3 flex items-center gap-2 rounded-full bg-black/30 px-4 py-2 font-display text-2xl">
-                ⭐ {avg != null ? avg.toFixed(1) : "–"} <span className="text-base text-white/60">/ 10 · {state.video?.ratingCount ?? 0} ratings</span>
+                ⭐ {avg != null ? avg.toFixed(1) : "–"} <span className="text-base text-white/70">/ 10 · {state.video?.ratingCount ?? 0} ratings</span>
               </div>
             </div>
             {/* Below lg: a short scrolling list (it's a phone/tablet, so vertical space is tight). From lg up
@@ -56,15 +63,15 @@ export default function RevealPanel({ state, instant = false }: { state: GameSta
                 >
                   <span className="flex items-center gap-2">
                     <Avatar name={g.name} color={g.color} size={28} />
-                    <span className="font-semibold">{g.name}</span>
-                    <span className="text-sm text-white/60">guessed {g.guessedName}</span>
+                    <span className="break-words font-semibold">{g.name}</span>
+                    <span className="break-words text-sm text-white/70">guessed {g.guessedName}</span>
                   </span>
                   <span className="font-display">
-                    {g.correct ? "✅ +1" : "❌"} <span className="ml-2 text-white/60">{g.rating}★</span>
+                    {g.correct ? "✅ +1" : "❌"} <span className="ml-2 text-white/70">{g.rating}★</span>
                   </span>
                 </motion.li>
               ))}
-              {r.guesses.length === 0 && <li className="text-center text-white/50">No guesses this time!</li>}
+              {r.guesses.length === 0 && <li className="text-center text-white/70">No guesses this time!</li>}
             </ul>
           </motion.div>
         )}

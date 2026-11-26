@@ -89,7 +89,7 @@ export default function HostPlayerPanel({ state, onStatus }: { state: GameState;
 
   if (state.session.state !== "playing" || answered) {
     return (
-      <div className="card p-3 text-center text-sm text-white/60">
+      <div className="card p-3 text-center text-sm text-white/70">
         {answered && state.session.state === "playing" ? "🔒 Locked in" : "Playing as"}{" "}
         <span className="font-semibold text-white/80">{me?.name}</span>
       </div>

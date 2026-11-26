@@ -33,7 +33,7 @@ export default function RosterPanel({ groupId, players }: { groupId: string; pla
             <Avatar name={p.name} color={p.color} size={32} />
             <span className="font-semibold">{p.name}</span>
             <button
-              className="ml-1 text-white/40 hover:text-[#FF5E5E]"
+              className="ml-1 text-white/70 hover:text-[#FF5E5E]"
               title="Remove"
               onClick={async () => {
                 if (!confirm(`Remove ${p.name} from the roster? Their past scores are kept.`)) return;

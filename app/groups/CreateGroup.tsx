@@ -62,7 +62,7 @@ export default function CreateGroup() {
             <div>
               <label className="label">Team members (one per line or comma-separated)</label>
               <textarea className="input min-h-[120px]" value={players} onChange={(e) => setPlayers(e.target.value)} placeholder={"Alex\nSam\nJordan"} />
-              <p className="mt-1 text-xs text-white/50">You can add or remove people later.</p>
+              <p className="mt-1 text-xs text-white/70">You can add or remove people later.</p>
             </div>
             {err && <p className="text-sm text-[#FFB3B3]">{err}</p>}
             <div className="flex gap-3">

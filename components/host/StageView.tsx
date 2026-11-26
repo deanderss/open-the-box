@@ -104,18 +104,24 @@ export default function StageView({
                       bar doesn't wrap onto three lines on a phone. */}
                   <div className="hidden items-center gap-1.5 sm:flex">
                     <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
-                      Skip ⏭
+                      Skip <span aria-hidden>⏭</span>
                     </button>
-                    <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." onClick={() => setReloadN((n) => n + 1)}>
-                      ↻
+                    <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." aria-label="Reload video" onClick={() => setReloadN((n) => n + 1)}>
+                      <span aria-hidden>↻</span>
                     </button>
-                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" onClick={onPauseExit}>
-                      ⏸
+                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
+                      <span aria-hidden>⏸</span>
                     </button>
                   </div>
                   <div className="relative sm:hidden">
-                    <button className="btn btn-ghost btn-sm" aria-haspopup="true" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
-                      ⋯ More
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      aria-haspopup="true"
+                      aria-expanded={moreOpen}
+                      aria-label="More actions"
+                      onClick={() => setMoreOpen((o) => !o)}
+                    >
+                      <span aria-hidden>⋯</span> More
                     </button>
                     {moreOpen && (
                       <div className="absolute right-0 top-full z-20 mt-1 flex flex-col gap-1 rounded-xl bg-night p-2 shadow-chunky">
@@ -127,7 +133,7 @@ export default function StageView({
                             act("skip");
                           }}
                         >
-                          Skip ⏭
+                          Skip <span aria-hidden>⏭</span>
                         </button>
                         <button
                           className="btn btn-ghost btn-sm whitespace-nowrap"
@@ -136,7 +142,7 @@ export default function StageView({
                             setReloadN((n) => n + 1);
                           }}
                         >
-                          ↻ Reload
+                          <span aria-hidden>↻</span> Reload
                         </button>
                         <button
                           className="btn btn-sky btn-sm whitespace-nowrap"
@@ -146,13 +152,13 @@ export default function StageView({
                             onPauseExit();
                           }}
                         >
-                          ⏸ Pause
+                          <span aria-hidden>⏸</span> Pause
                         </button>
                       </div>
                     )}
                   </div>
                   <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
-                    ⤡ Exit
+                    <span aria-hidden>⤡</span> Exit
                   </button>
                 </div>
               </div>
@@ -187,7 +193,7 @@ export default function StageView({
             }
             style={answerOpen ? { paddingBottom: "max(1rem, env(safe-area-inset-bottom))" } : undefined}
           >
-            <button className="mb-2 ml-auto block text-sm text-white/60 underline" onClick={() => setAnswerOpen(false)}>
+            <button className="mb-2 ml-auto block text-sm text-white/70 underline" onClick={() => setAnswerOpen(false)}>
               Close
             </button>
             <HostPlayerPanel state={state} onStatus={handleAnswerStatus} />
@@ -201,7 +207,7 @@ export default function StageView({
             <Countdown ms={remaining} total={s.windowSeconds} size={150} />
             <p className="font-display text-3xl">
               <span className="text-mint">{state.answered}</span>
-              <span className="text-white/50"> / {state.eligible} locked in</span>
+              <span className="text-white/70"> / {state.eligible} locked in</span>
             </p>
             <div className="flex flex-wrap justify-center gap-3">
               {state.players.map((p) => (

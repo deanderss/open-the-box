@@ -12,6 +12,31 @@ body {
   background-attachment: fixed;
 }
 
+@layer base {
+  /* Keyboard-focus ring on every real interactive element — covers .btn (it's a <button>) and every
+     ad-hoc "tile" button (ratings, guesses, avatar picks) that doesn't use the .btn class at all. Only
+     shows for keyboard/AT focus, never on a mouse/touch tap, so it doesn't clash with the active-state
+     "squash" animation on .btn. */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  [tabindex]:focus-visible {
+    @apply outline-none ring-4 ring-sunny ring-offset-2 ring-offset-night;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* framer-motion's own animations are handled by <MotionConfig reducedMotion="user">; this is the
+     backstop for everything else — the CSS @keyframes below, and the many Tailwind `transition`/`active:`
+     utilities used for hover and tap feedback throughout. */
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @layer components {
   .btn { @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-display text-lg font-bold tracking-wide shadow-chunky transition active:translate-y-1 active:shadow-none disabled:opacity-50 disabled:pointer-events-none; }
   .btn-sm { @apply px-3 py-2 text-base rounded-xl shadow-chunkySm; }

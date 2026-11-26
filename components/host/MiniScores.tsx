@@ -10,7 +10,7 @@ export default function MiniScores({ scores }: { scores: { playerId: string; nam
         {scores.slice(0, 6).map((sc, i) => (
           <li key={sc.playerId} className="flex items-center justify-between">
             <span className="flex items-center gap-2">
-              <span className="w-5 text-white/50">{i + 1}</span>
+              <span className="w-5 text-white/70">{i + 1}</span>
               <Avatar name={sc.name} color={sc.color} size={26} /> {sc.name}
             </span>
             <span className="font-display text-lg">{fmtPoints(sc.points)}</span>

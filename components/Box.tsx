@@ -1,7 +1,7 @@
 "use client";
 import { motion, useAnimationControls } from "framer-motion";
 import { useState } from "react";
-import confetti from "canvas-confetti";
+import { fireConfetti } from "@/lib/confetti";
 
 /** Cartoony cardboard box. Click to pop the lid. */
 export default function Box({
@@ -25,7 +25,7 @@ export default function Box({
     if (opening || disabled) return;
     setOpening(true);
     await body.start({ rotate: [0, -6, 6, -8, 8, -4, 0], transition: { duration: 0.7 } });
-    confetti({ particleCount: 160, spread: 90, startVelocity: 45, origin: { y: 0.55 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
+    fireConfetti({ particleCount: 160, spread: 90, startVelocity: 45, origin: { y: 0.55 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
     await lid.start({ y: -size * 0.9, rotate: -35, x: -size * 0.25, opacity: 0, transition: { duration: 0.7, ease: "easeOut" } });
     onOpened?.();
   }

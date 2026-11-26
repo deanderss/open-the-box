@@ -111,7 +111,7 @@ function LoginInner() {
           </button>
         </form>
         {mode === "login" && (
-          <p className="mt-4 text-center text-sm text-white/60">
+          <p className="mt-4 text-center text-sm text-white/70">
             <Link href="/forgot" className="underline hover:text-white">
               Forgot password?
             </Link>

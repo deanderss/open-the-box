@@ -24,13 +24,13 @@ export default function ModsPanel({
         {mods.map((m) => (
           <li key={m.id} className="flex items-center justify-between rounded-xl bg-black/30 px-3 py-2">
             <span>
-              <span className="font-semibold">{m.name}</span> <span className="text-sm text-white/50">{m.email}</span>
+              <span className="font-semibold">{m.name}</span> <span className="text-sm text-white/70">{m.email}</span>
             </span>
             <span className="flex items-center gap-2">
               <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${m.role === "owner" ? "bg-sunny text-night" : "bg-white/15"}`}>{m.role === "owner" ? "owner" : "co-mod"}</span>
               {m.role === "co" && (isOwner || m.id === meId) && (
                 <button
-                  className="text-white/40 hover:text-[#FF5E5E]"
+                  className="text-white/70 hover:text-[#FF5E5E]"
                   onClick={async () => {
                     if (!confirm(m.id === meId ? "Leave this box?" : `Remove ${m.name}?`)) return;
                     await fetch(`/api/groups/${groupId}/moderators?moderatorId=${m.id}`, { method: "DELETE" });

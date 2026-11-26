@@ -32,7 +32,7 @@ export default function Forgot() {
           </form>
         )}
         <p className="mt-4 text-center text-sm">
-          <Link href="/login" className="text-white/60 underline">
+          <Link href="/login" className="text-white/70 underline">
             Back to login
           </Link>
         </p>

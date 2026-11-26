@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import Link from "next/link";
-import confetti from "canvas-confetti";
+import { fireConfetti } from "@/lib/confetti";
 import Avatar from "@/components/Avatar";
 import type { GameState } from "@/components/useGameState";
 import { fmtPoints } from "@/lib/points";
@@ -11,7 +11,7 @@ export default function Finale({ state, groupId }: { state: GameState; groupId: 
     const end = Date.now() + 1500;
     const t = setInterval(() => {
       if (Date.now() > end) return clearInterval(t);
-      confetti({ particleCount: 40, spread: 100, origin: { x: Math.random(), y: 0.2 } });
+      fireConfetti({ particleCount: 40, spread: 100, origin: { x: Math.random(), y: 0.2 } });
     }, 200);
     return () => clearInterval(t);
   }, []);
