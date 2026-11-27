@@ -1,7 +1,20 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
 import { json } from "@/lib/util";
-import { getSession, beginSession, doReveal, nextVideo, skipVideo, endSession, finishSession, pauseSession, resumeSession, broadcast } from "@/lib/game";
+import {
+  getSession,
+  beginSession,
+  doReveal,
+  nextVideo,
+  skipVideo,
+  endSession,
+  finishSession,
+  pauseSession,
+  resumeSession,
+  broadcast,
+  buildState,
+  type SessionRow,
+} from "@/lib/game";
 
 export const POST = handle(async (req) => {
   const { sessionId, action, playerId, expectIndex } = await body<{ sessionId?: string; action?: string; playerId?: string; expectIndex?: number }>(req);
@@ -17,13 +30,14 @@ export const POST = handle(async (req) => {
   if (typeof expectIndex === "number" && ["next", "skip", "reveal"].includes(action || "") && expectIndex !== s.current_index) {
     throw new HttpError(409, "Someone already moved on — refreshing");
   }
-  let r: { error?: string; session?: unknown } = {};
+  let r: { error?: string; session?: SessionRow } = {};
+  let finalSession: SessionRow = s;
   switch (action) {
     case "begin":
       r = await beginSession(s);
       break;
     case "reveal":
-      if (s.state === "playing") await doReveal(s);
+      if (s.state === "playing") finalSession = await doReveal(s);
       break;
     case "next":
       r = await nextVideo(s);
@@ -46,12 +60,18 @@ export const POST = handle(async (req) => {
     case "kick":
       if (playerId) {
         await supabaseAdmin().from("session_players").delete().eq("session_id", s.id).eq("player_id", playerId);
-        await broadcast(s.id);
+        broadcast(s.id);
       }
       break;
     default:
       throw new HttpError(400, "Unknown action");
   }
   if (r.error) throw new HttpError(400, r.error);
-  return json({ ok: true });
+  if (r.session) finalSession = r.session;
+  // The caller (the host screen) was about to immediately re-fetch this exact same state with a second
+  // request anyway — hand it back directly instead, since every action here already ends with the session in
+  // its final, settled shape (buildState reads whatever was just written, no extra delay needed for it to
+  // "catch up").
+  const state = await buildState(finalSession, { kind: "host" });
+  return json({ ok: true, state });
 });

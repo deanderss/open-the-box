@@ -1,9 +1,9 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useGameState } from "@/components/useGameState";
+import { useGameState, type GameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
 import { enterNativeFullscreen, exitNativeFullscreen, scrollToTop } from "@/lib/fullscreen";
 import { unlockAudio } from "@/lib/sfx";
@@ -20,7 +20,7 @@ const GrandReveal = dynamic(() => import("@/components/GrandReveal"), { ssr: fal
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
   const sessionId = useSearchParams().get("session");
-  const { state, error, refresh, fetchedAt, reconnecting } = useGameState({ sessionId }, 2000);
+  const { state, error, refresh, fetchedAt, reconnecting, applyState } = useGameState({ sessionId }, 2000);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [reloadN, setReloadN] = useState(0); // bumped to remount the video iframe ("Reload video")
@@ -32,16 +32,51 @@ function HostInner({ groupId }: { groupId: string }) {
   const s = state?.session;
   useWakeLock(!!s && s.state !== "finished");
 
+  // Instant "Next": the upcoming video is already sitting preloaded in a hidden slot (see EmbedPlayer), so
+  // there's no technical reason the moderator has to watch a full action request *and then* a poll finish
+  // before anything visibly happens. Set the instant the tap fires (inside `act`, below), cleared automatically
+  // once the real poll genuinely reaches that index, or rolled back immediately if the action fails (someone
+  // else already moved on, a dropped connection, a real server error). Everything below that reads game state
+  // for what to actually render uses `view`/`vs` (state with this overlaid on top, when present) instead of
+  // the raw `state`/`s` — the two effects further down that must react to real server transitions (the grand
+  // reveal trigger, the end-of-timer poke) are the deliberate exception, and keep reading raw `s`.
+  const [pendingNext, setPendingNext] = useState<{ index: number; video: NonNullable<GameState["upNext"]>; at: number } | null>(null);
+  useEffect(() => {
+    if (pendingNext && s && s.index >= pendingNext.index) setPendingNext(null);
+  }, [pendingNext, s?.index]);
+  // Safety net: if the real poll never catches up for some reason (a server hiccup that still returned ok,
+  // a dropped realtime nudge), don't leave the stage showing a guess forever.
+  useEffect(() => {
+    if (!pendingNext) return;
+    const t = setTimeout(() => setPendingNext(null), 6000);
+    return () => clearTimeout(t);
+  }, [pendingNext]);
+  const view = useMemo<GameState | null>(() => {
+    if (!state || !pendingNext || !s || s.index >= pendingNext.index) return state;
+    const nv = pendingNext.video;
+    return {
+      ...state,
+      session: { ...state.session, index: pendingNext.index, state: "playing", paused: false, remainingMs: state.session.windowSeconds * 1000 },
+      video: { id: nv.id, platform: nv.platform, embedUrl: nv.embedUrl, sourceUrl: nv.sourceUrl, aspect: nv.aspect, blocked: nv.blocked, directUrl: nv.directUrl },
+      upNext: null, // not known yet — filled back in by the next real poll
+      reveal: null,
+      answered: 0,
+      players: state.players.map((p) => ({ ...p, answered: false })),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, pendingNext, s?.index]);
+  const vs = view?.session;
+
   // Fullscreen while a video is playing; back to the window view at the reveal (or when paused).
-  const fullscreen = !!(s && s.state === "playing" && !s.paused && state?.video && wantFull);
+  const fullscreen = !!(vs && vs.state === "playing" && !vs.paused && view?.video && wantFull);
   useEffect(() => {
     if (!fullscreen) exitNativeFullscreen();
-  }, [fullscreen, s?.state, s?.paused]);
+  }, [fullscreen, vs?.state, vs?.paused]);
   // Each new video starts fullscreen again
   useEffect(() => {
     setWantFull(true);
     setFinishPending(false);
-  }, [s?.index]);
+  }, [vs?.index]);
 
   // Grand reveal: only when we actually watch the round flip from playing to reveal
   // (a page refresh mid-reveal just shows the results).
@@ -94,6 +129,9 @@ function HostInner({ groupId }: { groupId: string }) {
       scrollToTop();
       enterNativeFullscreen();
     }
+    // See the `pendingNext` effects above — show the already-preloaded next video immediately rather than
+    // waiting for this request (and then a poll) to confirm what we're already looking at anyway.
+    if (action === "next" && state?.upNext && s) setPendingNext({ index: s.index + 1, video: state.upNext, at: Date.now() });
     setBusy(true);
     setActionErr(null);
     try {
@@ -109,15 +147,21 @@ function HostInner({ groupId }: { groupId: string }) {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
         setActionErr(d.error || "Something went wrong");
+        if (action === "next") setPendingNext(null); // guess was wrong (or the request failed) — fall back to what's real
+        await refresh();
         return false;
       }
+      // The action route already computed and returned the resulting state server-side — apply it directly
+      // instead of immediately firing a second request (a plain refresh()) to ask for the exact same thing.
+      if (d.state) applyState(d.state);
+      else await refresh();
       return true;
     } catch {
       setActionErr("Couldn't reach the server — check your connection and try again");
+      if (action === "next") setPendingNext(null);
+      await refresh();
       return false;
     } finally {
-      // Always refresh and always clear busy, even if the request never made it out (offline, timeout, etc.)
-      await refresh();
       setBusy(false);
     }
   }
@@ -158,21 +202,31 @@ function HostInner({ groupId }: { groupId: string }) {
   if (error && !state) return <Centered>{error}</Centered>;
   if (!state || !s) return <Centered>Opening the box…</Centered>;
 
+  // `gs`/`gvs`: `state`/`s` with the optimistic "Next" overlay applied, when there is one (see `view` above).
+  // By construction `view` is only ever null when `state` is, which was just ruled out, so this is purely to
+  // satisfy the type-checker, not a real fallback branch.
+  const gs = view ?? state;
+  const gvs = gs.session;
+  // TimerBar/LiveCountdown extrapolate the time left from `remainingMs` as of `fetchedAt` — while the
+  // optimistic overlay above is active, that has to be "now" (the full window just started, from the stage's
+  // point of view), not whenever the last real poll actually landed, or the timer would appear to jump
+  // straight to having already ticked down.
+  const effectiveFetchedAt = gs !== state && pendingNext ? pendingNext.at : fetchedAt;
   const joinUrl = `${origin}/join?code=${s.code}`;
 
   return (
     <main className="flex min-h-screen flex-col">
-      <HostHeader groupId={groupId} state={state} origin={origin} busy={busy} reconnecting={reconnecting} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
+      <HostHeader groupId={groupId} state={gs} origin={origin} busy={busy} reconnecting={reconnecting} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
 
-      {s.state === "lobby" && <LobbyView state={state} joinUrl={joinUrl} busy={busy} onBegin={() => act("begin")} onKick={kick} />}
+      {gvs.state === "lobby" && <LobbyView state={gs} joinUrl={joinUrl} busy={busy} onBegin={() => act("begin")} onKick={kick} />}
 
-      {s.paused && s.state !== "finished" && <PausedView groupId={groupId} index={s.index} total={s.total} busy={busy} onResume={() => act("resume")} />}
+      {gvs.paused && gvs.state !== "finished" && <PausedView groupId={groupId} index={gvs.index} total={gvs.total} busy={busy} onResume={() => act("resume")} />}
 
-      {!s.paused && (s.state === "playing" || s.state === "reveal") && state.video && (
+      {!gvs.paused && (gvs.state === "playing" || gvs.state === "reveal") && gs.video && (
         <StageView
-          state={state}
-          fetchedAt={fetchedAt}
+          state={gs}
+          fetchedAt={effectiveFetchedAt}
           fullscreen={fullscreen}
           setWantFull={setWantFull}
           reloadN={reloadN}

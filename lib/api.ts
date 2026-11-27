@@ -16,8 +16,12 @@ export async function requireUser() {
 }
 
 export async function requireGroupMod(groupId: string) {
-  const uid = await requireUser();
-  const role = await isGroupMod(uid, groupId);
+  const uid = await currentUserId();
+  if (!uid) throw new HttpError(401, "Please log in");
+  // Both only depend on the uid we already have, not on each other — this is on the host's hot path (every
+  // Next/Reveal/Skip tap), so there's no reason to pay for two sequential database round trips here.
+  const [suspended, role] = await Promise.all([isSuspended(uid), isGroupMod(uid, groupId)]);
+  if (suspended) throw new HttpError(403, "This account has been suspended");
   if (!role) throw new HttpError(403, "You are not a moderator of this box");
   return { uid, role };
 }

@@ -1,10 +1,11 @@
 import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
 import { checkMedia, type Media } from "./playable";
-import { resolveInstagramVideo } from "./igDirect";
+import { resolveInstagramVideo, hasSessionId } from "./igDirect";
 import { purgeUpload } from "./uploads";
 import { SENDER_BONUS } from "./points";
 import { HttpError } from "./api";
+import { background } from "./background";
 
 export type SessionRow = {
   id: string;
@@ -74,26 +75,32 @@ export function currentVideoId(s: SessionRow) {
   return s.current_index >= 0 ? s.video_order[s.current_index] ?? null : null;
 }
 
-/** Fire-and-forget realtime nudge so screens refetch instantly. Payload carries no secrets. */
-export async function broadcast(sessionId: string) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 1500); // never let a slow realtime call hold up the action itself
-  try {
-    await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/realtime/v1/api/broadcast`, {
-      method: "POST",
-      signal: ctrl.signal,
-      headers: {
-        "Content-Type": "application/json",
-        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      },
-      body: JSON.stringify({ messages: [{ topic: `session-${sessionId}`, event: "update", payload: { t: Date.now() } }] }),
-    });
-  } catch {
-    /* polling fallback covers it */
-  } finally {
-    clearTimeout(t);
-  }
+/**
+ * Fire-and-forget realtime nudge so screens refetch instantly. Payload carries no secrets. Never worth any
+ * caller actually waiting on — polling is the fallback either way — so the HTTP call itself is handed to
+ * `background()` instead of being awaited; every existing `await broadcast(...)` call site still works
+ * unchanged (awaiting a non-promise just resolves immediately), it just no longer adds this call's latency
+ * (up to 1.5s on a slow connection) to the action that triggered it.
+ */
+export function broadcast(sessionId: string) {
+  background(async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/realtime/v1/api/broadcast`, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({ messages: [{ topic: `session-${sessionId}`, event: "update", payload: { t: Date.now() } }] }),
+      });
+    } finally {
+      clearTimeout(t);
+    }
+  });
 }
 
 async function counts(s: SessionRow) {
@@ -204,8 +211,13 @@ export async function beginSession(s: SessionRow) {
 export async function nextVideo(s: SessionRow) {
   if (s.state === "playing") s = await doReveal(s);
   if (s.state !== "reveal") return { error: "Not ready for next" };
-  await purgeUpload(currentVideoId(s)); // a personal video has now been played and rated: delete its file
-  return { session: await showVideoAt(s, s.current_index + 1) };
+  const justFinishedId = currentVideoId(s);
+  // Show the next video FIRST — the moderator (and everyone else) is waiting on this write to see anything
+  // happen at all. Deleting the just-finished video's uploaded file is real work (a storage API call) that
+  // nobody needs to wait on; it happens just as reliably after the response is already on its way back.
+  const session = await showVideoAt(s, s.current_index + 1);
+  background(() => purgeUpload(justFinishedId));
+  return { session };
 }
 
 export async function skipVideo(s: SessionRow) {
@@ -213,8 +225,9 @@ export async function skipVideo(s: SessionRow) {
   if (!vid || (s.state !== "playing" && s.state !== "reveal")) return { error: "Nothing to skip" };
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
-  await purgeUpload(vid); // a skipped personal video is never shown again, so its file goes too
-  return { session: await showVideoAt(s, s.current_index + 1) };
+  const session = await showVideoAt(s, s.current_index + 1);
+  background(() => purgeUpload(vid)); // a skipped personal video is never shown again, so its file goes too
+  return { session };
 }
 
 /** Freeze the game so the moderator can leave and come back later. */
@@ -252,9 +265,11 @@ export async function resumeSession(s: SessionRow) {
  */
 export async function finishSession(s: SessionRow) {
   if (s.state === "lobby") return endSession(s);
-  if (s.state === "playing") await doReveal(s);
-  await purgeUpload(currentVideoId(s)); // the last video has been played and rated
-  return endSession(s);
+  if (s.state === "playing") s = await doReveal(s);
+  const lastId = currentVideoId(s);
+  const result = await endSession(s);
+  background(() => purgeUpload(lastId)); // the last video has been played and rated
+  return result;
 }
 
 export async function endSession(s: SessionRow) {
@@ -308,26 +323,30 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
   let knownOk = false; // true only once genuinely confirmed embeddable (the anonymous path), not just "has a link right now"
   if (v.platform === "instagram") {
     const expires = v.direct_url_expires ? new Date(v.direct_url_expires).getTime() : 0;
+    const knownDeadEnd = (v.playability === "restricted" || v.playability === "gone") && !hasSessionId();
     if (v.direct_url && expires > Date.now()) {
       out.directUrl = v.direct_url;
       // A cached link doesn't tell us which path it came from; fall through and trust the saved playability.
+    } else if (knownDeadEnd) {
+      // Already confirmed restricted/gone on a previous poll, and there's no spare-account session configured
+      // to try instead — asking Instagram again can only ever fail the exact same way it did last time, so
+      // don't: this is the single biggest source of per-poll latency and outbound Instagram traffic once a box
+      // has a few restricted reels in it (every poll, for both the current video and the one warming up next).
     } else {
       const direct = await resolveInstagramVideo(v.embed_url, v.source_url).catch(() => null);
       if (direct) {
         out.directUrl = direct.url;
         knownOk = direct.source === "anonymous";
-        db()
-          .from("videos")
-          .update({
-            direct_url: direct.url,
-            direct_url_expires: new Date(direct.expiresAt).toISOString(),
-            ...(knownOk ? { playability: "ok" } : {}),
-          })
-          .eq("id", v.id)
-          .then(
-            () => {},
-            () => {}
-          );
+        background(async () => {
+          await db()
+            .from("videos")
+            .update({
+              direct_url: direct.url,
+              direct_url_expires: new Date(direct.expiresAt).toISOString(),
+              ...(knownOk ? { playability: "ok" } : {}),
+            })
+            .eq("id", v.id);
+        });
       }
       // No direct link at all (restricted with no working spare-account session, or genuinely gone): fall
       // through to the saved/live playability check below, same as every other platform.
@@ -342,14 +361,9 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
   }
   const m: Media | null = await checkMedia({ platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url }).catch(() => null);
   if (m) {
-    db()
-      .from("videos")
-      .update({ playability: m.playability, aspect: m.aspect ?? null })
-      .eq("id", v.id)
-      .then(
-        () => {},
-        () => {}
-      );
+    background(async () => {
+      await db().from("videos").update({ playability: m.playability, aspect: m.aspect ?? null }).eq("id", v.id);
+    });
   }
   if (m?.aspect && !out.aspect) out.aspect = m.aspect;
   if (m?.playability === "restricted" || m?.playability === "gone") out.blocked = m.playability;

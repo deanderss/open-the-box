@@ -115,6 +115,12 @@ function sessionId(): string | null {
   return v && v.trim() ? v.trim() : null;
 }
 
+/** Whether a spare-account session is configured at all — callers use this to decide whether it's even worth
+ *  asking Instagram again about a reel already known to be restricted/gone (see lib/game.ts `mediaInfo`). */
+export function hasSessionId(): boolean {
+  return !!sessionId();
+}
+
 // A dead or challenged session shouldn't be retried on every video on every poll; back off for a while.
 let sessionDeadUntil = 0;
 
@@ -174,10 +180,21 @@ async function loggedIn(embedUrl: string, shortcode: string): Promise<DirectVide
 // this a slow lookup could be kicked off again before the first one finishes.
 const inFlight = new Map<string, Promise<DirectVideo | null>>();
 
+// A reel that just failed to resolve (not yet known as `restricted`/`gone` in the DB — mediaInfo's own
+// dead-end check handles that case for free — but, say, a session that's gone dead, or a reel whose cached
+// link just expired and turns out to need the logged-in path again) would otherwise get asked about again on
+// literally the next poll, ~2s later, for as long as the current/upNext video stays put. Remembering a miss
+// for a while turns "every poll" into "once per ~10 minutes" without needing the DB involved at all.
+const NEGATIVE_TTL_MS = 10 * 60 * 1000;
+const negativeCache = new Map<string, number>(); // key -> don't bother retrying before this (epoch ms)
+
 /** Resolve a reel/post to a direct playable URL, or null if it can't be. Fails open: never throws. */
 export async function resolveInstagramVideo(embedUrl: string, sourceUrl: string): Promise<DirectVideo | null> {
   const shortcode = shortcodeOf(sourceUrl) ?? shortcodeOf(embedUrl);
   const key = shortcode ?? embedUrl;
+  const now = Date.now();
+  const blockedUntil = negativeCache.get(key);
+  if (blockedUntil && blockedUntil > now) return null;
   const existing = inFlight.get(key);
   if (existing) return existing;
   const p = (async () => {
@@ -185,7 +202,21 @@ export async function resolveInstagramVideo(embedUrl: string, sourceUrl: string)
     if (direct) return direct;
     if (!shortcode) return null;
     return await loggedIn(embedUrl, shortcode);
-  })().finally(() => inFlight.delete(key));
+  })()
+    .then((result) => {
+      if (result) negativeCache.delete(key);
+      else negativeCache.set(key, Date.now() + NEGATIVE_TTL_MS);
+      return result;
+    })
+    .finally(() => {
+      inFlight.delete(key);
+      if (negativeCache.size > 2000) {
+        const cutoff = Date.now();
+        negativeCache.forEach((until, k) => {
+          if (until < cutoff) negativeCache.delete(k);
+        });
+      }
+    });
   inFlight.set(key, p);
   return p;
 }

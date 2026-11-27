@@ -160,5 +160,22 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
     };
   }, [sid, refresh, schedule]);
 
-  return { state, error, refresh, fetchedAt, reconnecting };
+  // Feed in a state snapshot obtained some other way — specifically, the host action route now returns the
+  // resulting state directly in its own response, since it just computed exactly that server-side anyway.
+  // Applying it here skips the extra `refresh()` round trip that used to run right after every Next/Reveal/
+  // Skip tap just to re-fetch the same thing a moment later. Goes through the same "did anything actually
+  // change" + reconnecting bookkeeping as a real poll result, so it behaves identically either way.
+  const applyState = useCallback((data: GameState) => {
+    liveState.current = data.session.state;
+    if (!sameExceptTimers(lastRaw.current, data)) {
+      setState(data);
+      setFetchedAt(Date.now());
+    }
+    lastRaw.current = data;
+    setError(null);
+    misses.current = 0;
+    setReconnecting(false);
+  }, []);
+
+  return { state, error, refresh, fetchedAt, reconnecting, applyState };
 }
