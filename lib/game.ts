@@ -6,6 +6,7 @@ import { purgeUpload, uploadsEnabled } from "./uploads";
 import { SENDER_BONUS } from "./points";
 import { HttpError } from "./api";
 import { background } from "./background";
+import { computeAwards, AWARDS_DONE, type Award } from "./awards";
 
 export type SessionRow = {
   id: string;
@@ -19,6 +20,8 @@ export type SessionRow = {
   created_at: string;
   ended_at: string | null;
   paused_at: string | null;
+  /** which award the post-game ceremony is on; >= the number of awards means it's over (migration 1300) */
+  awards_step: number;
 };
 
 const db = () => supabaseAdmin();
@@ -296,6 +299,32 @@ export async function endStaleSessions() {
     .lt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
     .select("id");
   return (data || []).length;
+}
+
+/**
+ * Awards ceremony: move on from award `expectStep` to the next one. Guarded on the step the host was looking
+ * at (same idea as `expectIndex` for videos), so a double tap on "Next award" can't skip one.
+ */
+export async function advanceAwards(s: SessionRow, expectStep: number) {
+  if (s.state !== "finished") return { error: "The game isn't finished yet" };
+  const { data } = await db()
+    .from("sessions")
+    .update({ awards_step: expectStep + 1 })
+    .eq("id", s.id)
+    .eq("awards_step", expectStep)
+    .select("*")
+    .maybeSingle();
+  if (!data) return { session: (await getSession(s.id))! }; // someone already moved on; report the current truth
+  await broadcast(s.id);
+  return { session: data as SessionRow };
+}
+
+/** Awards ceremony: jump straight to the final scoreboard. */
+export async function skipAwards(s: SessionRow) {
+  if (s.state !== "finished") return { error: "The game isn't finished yet" };
+  const { data } = await db().from("sessions").update({ awards_step: AWARDS_DONE }).eq("id", s.id).select("*").single();
+  await broadcast(s.id);
+  return { session: data as SessionRow };
 }
 
 export async function endSession(s: SessionRow) {
@@ -605,10 +634,38 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
         .select("*", { count: "exact", head: true })
         .eq("group_id", s.group_id)
         .eq("status", "queued");
-      finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0 };
+      // Awards ceremony: this game's own ratings (decoys and unrated sender answers excluded) for the videos
+      // that were shown. Small: at most players x videos rows, once per minute per instance.
+      let awards: Award[] = [];
+      if (shown.length) {
+        const [{ data: rated }, { data: shownRows }] = await Promise.all([
+          db().from("responses").select("player_id,video_id,rating").eq("session_id", s.id).eq("is_decoy", false).not("rating", "is", null),
+          db().from("videos").select("id,platform,source_url,submitted_by,status").in("id", shown),
+        ]);
+        const byId = new Map((shownRows || []).map((v) => [v.id as string, v]));
+        awards = computeAwards({
+          ratings: (rated || []) as { player_id: string; video_id: string; rating: number }[],
+          shown: shown.map((id) => byId.get(id)).filter((v): v is NonNullable<typeof v> => !!v) as {
+            id: string;
+            platform: string;
+            source_url: string;
+            submitted_by: string | null;
+            status: string;
+          }[],
+          nameOf,
+          colorOf,
+        });
+      }
+      finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0, awards };
       finaleCache.set(s.id, { v: finale, until: Date.now() + 60_000 });
     }
   }
+
+  // Awards: the host needs them all up front to animate each one; phones only get them once the ceremony on
+  // the big screen is over, so a phone can't spoil the next award.
+  const awardsCount = finale ? ((finale.awards as Award[] | undefined)?.length ?? 0) : 0;
+  const awardsStep = s.awards_step ?? AWARDS_DONE;
+  if (finale && viewer.kind !== "host" && awardsStep < awardsCount) finale = { ...finale, awards: [] };
 
   const startedMs = s.video_started_at ? new Date(s.video_started_at).getTime() : null;
   const clockNow = s.paused_at ? new Date(s.paused_at).getTime() : Date.now(); // timer is frozen while paused
@@ -625,6 +682,8 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       windowSeconds,
       remainingMs,
       serverNow: Date.now(),
+      awardsStep,
+      awardsCount,
     },
     group: group ? { id: group.id, name: group.name, color: group.color, emoji: group.emoji } : null,
     roster: (roster || []).map((p) => ({ id: p.id, name: p.display_name, color: p.avatar_color })),

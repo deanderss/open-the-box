@@ -11,17 +11,27 @@ import {
   finishSession,
   pauseSession,
   resumeSession,
+  advanceAwards,
+  skipAwards,
   broadcast,
   buildState,
   type SessionRow,
 } from "@/lib/game";
 
 export const POST = handle(async (req) => {
-  const { sessionId, action, playerId, expectIndex } = await body<{ sessionId?: string; action?: string; playerId?: string; expectIndex?: number }>(req);
+  const { sessionId, action, playerId, expectIndex, expectStep } = await body<{
+    sessionId?: string;
+    action?: string;
+    playerId?: string;
+    expectIndex?: number;
+    expectStep?: number;
+  }>(req);
   const s = sessionId ? await getSession(sessionId) : null;
   if (!s) throw new HttpError(404, "Session not found");
   await requireGroupMod(s.group_id);
-  if (s.ended_at && action !== "end") throw new HttpError(400, "This session has ended");
+  // The awards ceremony runs after the game has ended, so its two actions are the exception.
+  const isAwardAction = action === "award_next" || action === "award_skip";
+  if (s.ended_at && action !== "end" && !isAwardAction) throw new HttpError(400, "This session has ended");
   // While paused, only resume / end / pause / kick make sense
   if (s.paused_at && !["resume", "end", "finish", "pause", "kick"].includes(action || "")) throw new HttpError(409, "The game is paused. Resume it first.");
   // A double-tap (or two moderators on the same screen) can fire "next"/"skip"/"reveal" twice for the same
@@ -56,6 +66,13 @@ export const POST = handle(async (req) => {
       break;
     case "finish":
       r = await finishSession(s);
+      break;
+    case "award_next":
+      if (typeof expectStep !== "number") throw new HttpError(400, "Missing expectStep");
+      r = await advanceAwards(s, expectStep);
+      break;
+    case "award_skip":
+      r = await skipAwards(s);
       break;
     case "kick":
       if (playerId) {

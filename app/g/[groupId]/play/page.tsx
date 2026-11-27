@@ -17,6 +17,7 @@ import Finale from "@/components/host/Finale";
 // The grand-reveal slot machine (plus its confetti/sound effects) is only ever needed once per video, well
 // after the page has loaded, so it's loaded on first use instead of sitting in the page's initial bundle.
 const GrandReveal = dynamic(() => import("@/components/GrandReveal"), { ssr: false });
+const AwardsCeremony = dynamic(() => import("@/components/host/AwardsCeremony"), { ssr: false });
 
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
@@ -30,6 +31,7 @@ function HostInner({ groupId }: { groupId: string }) {
   // resolves from the already-fetched/cached chunk instead of starting a fresh network request.
   useEffect(() => {
     import("@/components/GrandReveal");
+    import("@/components/host/AwardsCeremony");
   }, []);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -128,7 +130,7 @@ function HostInner({ groupId }: { groupId: string }) {
   }, [s?.remainingMs, fetchedAt, s?.state, s?.paused, s?.index, refresh]);
 
   /** Returns whether the action actually succeeded, so callers (e.g. "pause & exit") can decide what to do next. */
-  async function act(action: string, extra: Record<string, string> = {}): Promise<boolean> {
+  async function act(action: string, extra: Record<string, unknown> = {}): Promise<boolean> {
     // Every call here starts synchronously from a real tap (every caller is a button onClick), which is
     // iOS Safari's only window to create/resume an AudioContext — by the time the grand reveal actually wants
     // to play its fanfare a few seconds later (sometimes with no tap at all, when the timer just runs out),
@@ -227,6 +229,8 @@ function HostInner({ groupId }: { groupId: string }) {
   // straight to having already ticked down.
   const effectiveFetchedAt = gs !== state && pendingNext ? pendingNext.at : fetchedAt;
   const joinUrl = `${origin}/join?code=${s.code}`;
+  // After the last video: the awards, one at a time, before the final scoreboard (see AwardsCeremony).
+  const inCeremony = s.state === "finished" && !!state.finale?.awards?.length && s.awardsStep < state.finale.awards.length;
 
   return (
     <main className="flex min-h-screen flex-col">
@@ -256,7 +260,16 @@ function HostInner({ groupId }: { groupId: string }) {
         />
       )}
 
-      {s.state === "finished" && <Finale state={state} groupId={groupId} />}
+      {s.state === "finished" && inCeremony && (
+        <AwardsCeremony
+          awards={state.finale!.awards}
+          step={s.awardsStep}
+          busy={busy}
+          onNext={(step) => act("award_next", { expectStep: step })}
+          onSkip={() => act("award_skip")}
+        />
+      )}
+      {s.state === "finished" && !inCeremony && <Finale state={state} groupId={groupId} />}
 
       {grandOpen && grandFor === s.index && s.state === "reveal" && state.reveal && (
         <GrandReveal

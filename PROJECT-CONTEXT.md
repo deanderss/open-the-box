@@ -489,3 +489,26 @@ Shipped to production on **Nov 27 2026** (commits `d4173a4`..`41196bb`, pushed t
 2. Play on TV needs a real device before `AIRPLAY_FEATURE_ENABLED` goes back to `true`.
 3. Instagram open-in-app deep links, the iOS tap fix and the restricted-reel `IG_SESSIONID` path are still untested on real phones (earlier sections).
 4. No automated tests exist; checks so far are `tsc`, `next build` and ad-hoc browser harnesses.
+
+## 14. Awards ceremony after a game (Nov 27 2026)
+
+When a game finishes (the moderator taps **Finished**, or the last video's **Next**), the host screen runs an awards ceremony before the final scoreboard. Decisions made with the owner: the **moderator taps "Next award"** for each one (there is also **Skip ceremony**); **phones say "Awards ceremony on the big screen!"** during it and list the awards afterwards; the order is **Biggest Hater → Biggest Lover → A Real Stinker → Absolute Banger**.
+
+### The awards (`lib/awards.ts`, pure, no database)
+- **Biggest Hater / Biggest Lover:** the player with the lowest / highest average rating this game, with their average. A player needs at least 2 ratings (1 if only one video was rated). Both are skipped if fewer than 2 players qualify or every average is the same. Ties: more ratings wins, then name.
+- **A Real Stinker / Absolute Banger:** the lowest / highest-rated video this game (this session's ratings only) and who sent it. The Stinker is skipped when only one video was rated. Ties: more ratings, then whichever played earlier. An unknown sender shows as "A mystery guest".
+- Only videos with `status = 'played'` count (skipped ones don't); decoy ratings are excluded. Averages are rounded to 1 decimal. Camera-roll uploads can win but get no "Watch again" link.
+- If no award qualifies (nobody rated anything), the ceremony is skipped and the final scoreboard shows directly.
+
+### How it works
+- **Migration `20250101001300_awards_step.sql`** adds `sessions.awards_step` (0 = first award; anything ≥ the number of awards, `AWARDS_DONE = 99` in practice, means done). Games that had already finished were set to 99 so they don't replay a ceremony. Applied to the live database on Nov 27 2026.
+- The step lives on the server, so a refreshed host screen resumes at the same award and phones know when it's over. Actions `award_next` (carries `expectStep`, conditional update, so a double tap only moves one award) and `award_skip` in `app/api/session/action/route.ts`. Both are allowed after `ended_at` is set and only when `state = 'finished'`.
+- `buildState()` computes the awards in the existing `finale` block (cached 60s with it). **No-leak rule:** the host always gets `finale.awards`; phones get an empty list until `awards_step >= awardsCount`. `session.awardsStep` and `session.awardsCount` go to everyone.
+- Host UI: `components/host/AwardsCeremony.tsx` (lazy-loaded and prefetched like `GrandReveal`). Each award: the box wobbles, the lid pops with a drumroll (~2s), then the card springs out with themed confetti and sound. Good awards get the fanfare and colour bursts; bad ones get a new `playSadTrombone()` (`lib/sfx.ts`) and a slow emoji drizzle (😤👎, 🤢💩). The Banger gets extra confetti waves.
+- `Finale.tsx`: the "Best video tonight" card was replaced by a **"Tonight's awards"** recap. Phones (`app/join/page.tsx`) list the awards under the final scores with a "That's you!" badge.
+
+### Verified
+- `tsc` and `next build`; `computeAwards` edge cases with sample data (ties, one video, all-equal ratings, a skipped video, an unknown sender, a single player, no ratings).
+- Server end to end against the live database with a throwaway group (deleted afterwards): award order and winners, phones see no awards until the end, a double-tapped Next only advances one step, Skip jumps to done.
+- The ceremony UI was checked in a browser with sample awards (all four cards, the box and drumroll phase, the Next and See final scores buttons).
+- **Not yet verified:** a real game with real phones, and the sounds on an actual TV or iPhone host.

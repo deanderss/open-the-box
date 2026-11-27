@@ -111,6 +111,34 @@ export function playFanfare() {
   [523.25, 659.25, 783.99, 1046.5].forEach((f) => note(c, f, t0 + 0.38, 1.1, 0.14));
 }
 
+/** "Wah wah wah wahhh": four descending trombone-ish notes, the last one sagging, for the not-so-proud awards. */
+export function playSadTrombone() {
+  const c = audio();
+  if (!c) return;
+  const t0 = c.currentTime + 0.02;
+  [392, 370, 349.23].forEach((f, i) => note(c, f, t0 + i * 0.42, 0.38, 0.16));
+  // the long last note slides down with a slow wobble
+  const o = c.createOscillator();
+  const g = c.createGain();
+  const lfo = c.createOscillator();
+  const lfoGain = c.createGain();
+  o.type = "sawtooth";
+  const t = t0 + 3 * 0.42;
+  o.frequency.setValueAtTime(329.63, t);
+  o.frequency.linearRampToValueAtTime(293.66, t + 1.1);
+  lfo.frequency.value = 6;
+  lfoGain.gain.value = 6;
+  lfo.connect(lfoGain).connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+  o.connect(g).connect(c.destination);
+  o.start(t);
+  lfo.start(t);
+  o.stop(t + 1.25);
+  lfo.stop(t + 1.25);
+}
+
 export function stopSfx() {
   timers.splice(0).forEach(clearTimeout);
   // Suspend, don't close: closing destroys the context permanently, so the very next reveal would need a

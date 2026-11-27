@@ -5,6 +5,7 @@ import { fireConfetti } from "@/lib/confetti";
 import Avatar from "@/components/Avatar";
 import type { GameState } from "@/components/useGameState";
 import { fmtPoints } from "@/lib/points";
+import { AWARD_INFO } from "@/lib/awards";
 
 export default function Finale({ state, groupId }: { state: GameState; groupId: string }) {
   useEffect(() => {
@@ -16,7 +17,7 @@ export default function Finale({ state, groupId }: { state: GameState; groupId: 
     return () => clearInterval(t);
   }, []);
   const top = state.scores[0];
-  const tv = state.finale?.topVideo;
+  const awards = state.finale?.awards ?? [];
   return (
     <section className="mx-auto w-full max-w-6xl flex-1 px-6 pb-12">
       <h1 className="title mt-4 text-center text-5xl text-sunny sm:text-6xl">That&apos;s a wrap! 🎬</h1>
@@ -37,19 +38,33 @@ export default function Finale({ state, groupId }: { state: GameState; groupId: 
             <p className="mt-6 text-white/70">Nobody guessed right. Sneaky team! 🕶</p>
           )}
         </div>
-        <div className="card flex flex-col items-center text-center">
-          <p className="label">Best video tonight</p>
-          {tv ? (
-            <>
-              <p className="text-6xl">🏆</p>
-              <p className="title mt-2 text-3xl">⭐ {Number(tv.avg_rating).toFixed(1)}</p>
-              <p className="text-white/70">sent by {tv.senderName}</p>
-              <a href={tv.source_url} target="_blank" rel="noreferrer" className="btn btn-sky btn-sm mt-3">
-                Watch again ↗
-              </a>
-            </>
+        <div className="card">
+          <p className="label text-center">Tonight&apos;s awards</p>
+          {awards.length ? (
+            <ul className="mt-2 space-y-3">
+              {awards.map((a) => (
+                <li key={a.kind} className="flex items-center gap-3">
+                  <span className="text-3xl" aria-hidden>
+                    {AWARD_INFO[a.kind].emoji}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm text-white/60">{AWARD_INFO[a.kind].title}</span>
+                    <span className="flex items-center gap-2 font-display text-lg">
+                      <Avatar name={a.name} color={a.color} size={24} />
+                      <span className="truncate">{a.name}</span>
+                      <span className="text-sunny">⭐ {a.avg.toFixed(1)}</span>
+                    </span>
+                  </span>
+                  {a.video && a.video.platform !== "upload" && (
+                    <a href={a.video.sourceUrl} target="_blank" rel="noreferrer" className="text-sm text-sky underline" title="Watch again">
+                      ↗
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p className="mt-6 text-white/70">No ratings yet</p>
+            <p className="mt-6 text-center text-white/70">No ratings yet</p>
           )}
         </div>
         <div className="card">

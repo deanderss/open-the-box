@@ -9,6 +9,7 @@ import LiveCountdown from "@/components/LiveCountdown";
 import { useSeat, seatKey, type Seat, type SeatResult } from "@/components/useSeat";
 import { REVEAL_SUSPENSE_MS } from "@/lib/revealTiming";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
+import { AWARD_INFO } from "@/lib/awards";
 
 function JoinInner() {
   const initial = (useSearchParams().get("code") || "").toUpperCase();
@@ -365,7 +366,13 @@ function Controller({
         </div>
       )}
 
-      {s.state === "finished" && (
+      {s.state === "finished" && s.awardsStep < s.awardsCount && (
+        <Panel emoji="🏆" title="Awards ceremony on the big screen!">
+          Eyes up! Find out who the biggest hater and the biggest lover are, and which videos stunk or slapped.
+        </Panel>
+      )}
+
+      {s.state === "finished" && s.awardsStep >= s.awardsCount && (
         <>
           <Panel emoji="🎬" title="That's a wrap!">
             You scored <b>{fmtPoints(me?.score ?? 0)}</b> point{me?.score === 1 ? "" : "s"} tonight. See you next time!
@@ -383,6 +390,28 @@ function Controller({
                   </li>
                 ))}
               </ol>
+            </div>
+          )}
+          {(state.finale?.awards?.length ?? 0) > 0 && (
+            <div className="card mt-4">
+              <p className="title mb-2 text-lg text-sunny">🏆 Tonight&apos;s awards</p>
+              <ul className="space-y-2">
+                {state.finale!.awards.map((a) => (
+                  <li key={a.kind} className={`flex items-center gap-3 rounded-xl px-2 py-1 ${a.playerId && a.playerId === me?.playerId ? "bg-white/15" : ""}`}>
+                    <span className="text-2xl" aria-hidden>
+                      {AWARD_INFO[a.kind].emoji}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs text-white/60">{AWARD_INFO[a.kind].title}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-display">{a.name}</span>
+                        {a.playerId && a.playerId === me?.playerId && <span className="rounded-full bg-sunny px-2 text-xs font-bold text-night">That&apos;s you!</span>}
+                      </span>
+                    </span>
+                    <span className="font-display text-sunny">⭐ {a.avg.toFixed(1)}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </>

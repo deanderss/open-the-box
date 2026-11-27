@@ -1,8 +1,22 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Award } from "@/lib/awards";
 
 export type GameState = {
-  session: { id: string; code: string; state: "lobby" | "playing" | "reveal" | "finished"; paused: boolean; index: number; total: number; windowSeconds: number; remainingMs: number; serverNow: number };
+  session: {
+    id: string;
+    code: string;
+    state: "lobby" | "playing" | "reveal" | "finished";
+    paused: boolean;
+    index: number;
+    total: number;
+    windowSeconds: number;
+    remainingMs: number;
+    serverNow: number;
+    /** which award the post-game ceremony is on; the ceremony is over once this is >= awardsCount */
+    awardsStep: number;
+    awardsCount: number;
+  };
   group: { id: string; name: string; color: string; emoji: string } | null;
   roster: { id: string; name: string; color: string }[];
   players: { id: string; name: string; color: string; answered: boolean }[];
@@ -35,6 +49,8 @@ export type GameState = {
     allTime: { player_id: string; display_name: string; avatar_color: string; correct: number; guesses: number; submitted: number; points: number }[];
     /** videos still waiting in the box for the next game */
     remaining: number;
+    /** awards ceremony, in order; phones get an empty list until the ceremony on the big screen is over */
+    awards: Award[];
   } | null;
   me: { playerId: string; name: string; color: string; answered: boolean; isMine: boolean; correct: boolean | null; score: number } | null;
   viewerValid: boolean;
