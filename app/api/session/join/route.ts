@@ -22,18 +22,25 @@ export const POST = handle(async (req) => {
   }
   const db = supabaseAdmin();
   if (!playerId) {
-    const { data: g } = await db.from("groups").select("name,color,emoji").eq("id", s.group_id).single();
-    const { data: roster } = await db.from("players").select("id,display_name,avatar_color").eq("group_id", s.group_id).eq("active", true).order("display_name");
-    const { data: taken } = await db.from("session_players").select("player_id").eq("session_id", s.id);
+    // None of these three depend on each other — fetch them together instead of back to back.
+    const [{ data: g }, { data: roster }, { data: taken }] = await Promise.all([
+      db.from("groups").select("name,color,emoji").eq("id", s.group_id).single(),
+      db.from("players").select("id,display_name,avatar_color").eq("group_id", s.group_id).eq("active", true).order("display_name"),
+      db.from("session_players").select("player_id").eq("session_id", s.id),
+    ]);
     const takenSet = new Set((taken || []).map((t) => t.player_id));
     return json({
       group: g,
       roster: (roster || []).map((p) => ({ id: p.id, name: p.display_name, color: p.avatar_color, taken: takenSet.has(p.id) })),
     });
   }
-  const { data: p } = await db.from("players").select("id").eq("id", playerId).eq("group_id", s.group_id).eq("active", true).maybeSingle();
+  // Same here: whether this name is actually on the roster, and whether someone's already sitting in its seat,
+  // are two independent questions — ask both at once.
+  const [{ data: p }, { data: existing }] = await Promise.all([
+    db.from("players").select("id").eq("id", playerId).eq("group_id", s.group_id).eq("active", true).maybeSingle(),
+    db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId).maybeSingle(),
+  ]);
   if (!p) throw new HttpError(400, "That name isn't on this box's roster");
-  const { data: existing } = await db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId).maybeSingle();
   if (existing) {
     if (token && existing.device_token === token) return json({ token, sessionId: s.id });
     throw new HttpError(409, "Someone already joined as that name. Ask the moderator to free it up.");

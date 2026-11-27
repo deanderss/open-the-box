@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabase-browser";
 
 export type GameState = {
   session: { id: string; code: string; state: "lobby" | "playing" | "reveal" | "finished"; paused: boolean; index: number; total: number; windowSeconds: number; remainingMs: number; serverNow: number };
@@ -147,16 +146,27 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, schedule]);
 
+  // `supabaseBrowser` pulls in the whole `@supabase/ssr` client just to open one realtime broadcast channel —
+  // dynamically imported so every page using this hook (every player's phone, the host screen) doesn't pay
+  // for that in its *initial* bundle before there's even a session id to subscribe with. Polling is the
+  // fallback either way, so a tick or two of delay here before the channel opens costs nothing real.
   const sid = state?.session.id;
   useEffect(() => {
     if (!sid) return;
-    const sb = supabaseBrowser();
-    const ch = sb
-      .channel(`session-${sid}`)
-      .on("broadcast", { event: "update" }, () => refresh().then(schedule))
-      .subscribe();
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    import("@/lib/supabase-browser").then(({ supabaseBrowser }) => {
+      if (cancelled) return;
+      const sb = supabaseBrowser();
+      const ch = sb
+        .channel(`session-${sid}`)
+        .on("broadcast", { event: "update" }, () => refresh().then(schedule))
+        .subscribe();
+      cleanup = () => sb.removeChannel(ch);
+    });
     return () => {
-      sb.removeChannel(ch);
+      cancelled = true;
+      cleanup?.();
     };
   }, [sid, refresh, schedule]);
 

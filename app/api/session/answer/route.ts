@@ -7,13 +7,16 @@ export const POST = handle(async (req) => {
   const { code, playerId, token, rating, guessId } = await body<{ code?: string; playerId?: string; token?: string; rating?: number; guessId?: string }>(req);
   const s = code ? await getSessionByCode(code) : null;
   if (!s) throw new HttpError(404, "Game not found");
-  const db = supabaseAdmin();
-  const { data: sp } = await db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId || "").maybeSingle();
-  if (!sp || sp.device_token !== token) throw new HttpError(403, "Please re-join the game");
   if (s.paused_at) throw new HttpError(409, "The game is paused. Hang tight!");
-  // server-authoritative timer
+  const db = supabaseAdmin();
   const win = await getWindowSeconds();
-  const fresh = await maybeAutoReveal(s, win);
+  // Seat verification doesn't depend on (and isn't depended on by) the server-authoritative timer check —
+  // run them together instead of paying for both round trips back to back.
+  const [{ data: sp }, fresh] = await Promise.all([
+    db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId || "").maybeSingle(),
+    maybeAutoReveal(s, win),
+  ]);
+  if (!sp || sp.device_token !== token) throw new HttpError(403, "Please re-join the game");
   if (fresh.state !== "playing") throw new HttpError(409, "Time's up for this one!");
   const vid = currentVideoId(fresh);
   if (!vid) throw new HttpError(409, "No video playing");

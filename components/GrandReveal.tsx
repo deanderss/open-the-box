@@ -4,15 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { fireConfetti } from "@/lib/confetti";
 import Avatar from "./Avatar";
 import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx";
+import { REVEAL_STEPS as STEPS, revealDelayFor as delayFor, REVEAL_SUSPENSE_MS as REEL_MS } from "@/lib/revealTiming";
 
 type P = { id: string; name: string; color: string };
 
-// The whole reveal is about 6.5 seconds: a slot-machine reel (~3.8s), then the winner (~2.7s).
-const STEPS = 16; // how many names the slot reel flips through
 const BOOM_MS = 2742; // how long the winner screen stays up before the results panel
-
-/** Delay before flip i: fast at first, easing off so the last name lands with a little suspense. */
-const delayFor = (i: number) => 97 + 517 * (i / (STEPS - 1)) ** 3;
 
 /** The reel and the winner card both show one name at a huge size — long ones need to shrink to still fit on one line. */
 function reelNameClass(name: string) {
@@ -26,11 +22,6 @@ function bigNameClass(name: string) {
   if (name.length <= 13) return "text-5xl sm:text-7xl";
   return "text-4xl sm:text-5xl";
 }
-const REEL_MS = Array.from({ length: STEPS }, (_, i) => delayFor(i)).reduce((a, b) => a + b, 0);
-
-/** Phones hold their own reveal back this long so they don't spoil the big screen. */
-export const REVEAL_SUSPENSE_MS = REEL_MS;
-
 export default function GrandReveal({
   players,
   sender,

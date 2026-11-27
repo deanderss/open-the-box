@@ -1,14 +1,13 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import ModeratorPromo from "@/components/ModeratorPromo";
 import { useGameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
 import LiveCountdown from "@/components/LiveCountdown";
-import { useSeat, type Seat, type SeatResult } from "@/components/useSeat";
-import { REVEAL_SUSPENSE_MS } from "@/components/GrandReveal";
+import { useSeat, seatKey, type Seat, type SeatResult } from "@/components/useSeat";
+import { REVEAL_SUSPENSE_MS } from "@/lib/revealTiming";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
 
 function JoinInner() {
@@ -20,7 +19,7 @@ function JoinInner() {
   const [err, setErr] = useState<string | null>(null);
   const [kickedMsg, setKickedMsg] = useState<string | null>(null);
   const [looking, setLooking] = useState(false);
-  const { seat, pick, clear, submitAnswer } = useSeat(confirmedCode);
+  const { seat, checked, pick, clear, submitAnswer } = useSeat(confirmedCode);
 
   async function lookup(c: string) {
     setErr(null);
@@ -43,9 +42,27 @@ function JoinInner() {
   }
 
   useEffect(() => {
-    if (initial.length === 4) lookup(initial);
+    if (initial.length !== 4) return;
+    // Reconnecting with a saved seat for this code is the common case (a refresh, a locked phone waking back
+    // up, a flaky connection recovering) — `useSeat` below is about to make exactly the one network call that
+    // actually matters (verify that seat), so let it start immediately instead of paying for a separate
+    // "look up this code" round trip first just to get a roster nobody's about to pick from. If it turns out
+    // the seat's no longer good, the effect further down falls back to a normal lookup() to get the picker.
+    if (typeof localStorage !== "undefined" && localStorage.getItem(seatKey(initial))) {
+      setConfirmedCode(initial);
+    } else {
+      lookup(initial);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fallback for the skip-ahead above: the saved seat turned out to be no longer valid (useSeat already
+  // dropped it), and we never actually fetched the roster — fetch it now so the name-picker has something
+  // to show instead of sitting empty.
+  useEffect(() => {
+    if (confirmedCode && checked && !seat && !roster) lookup(confirmedCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedCode, checked, seat, roster]);
 
   async function handlePick(playerId: string) {
     setErr(null);
@@ -163,7 +180,13 @@ function Controller({
     setRating(null);
     setGuess(null);
     setErr(null);
+    setJustLocked(false);
   }, [s?.index]);
+
+  // A 200 from `/api/session/answer` means the row is already in, for good — unlike the host's "Next" there's
+  // no later step that could still reject this after the fact, so there's no reason to make a player wait out
+  // a whole extra poll round trip just to see their own tap register.
+  const [justLocked, setJustLocked] = useState(false);
 
   // Don't spoil the big screen: hold the result back while the grand reveal plays there.
   // (Only when we watch the round flip to reveal. Joining or refreshing mid-reveal shows it right away.)
@@ -197,15 +220,19 @@ function Controller({
     const r = await submitAnswer(rating, guess);
     if (!r.ok) {
       setErr(r.error);
-    } else if (rating != null) {
+      setBusy(false);
+      return;
+    }
+    if (rating != null) {
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(60);
       const guessedName = guess ? (state?.roster.find((p) => p.id === guess)?.name ?? null) : null;
       const summary = { rating, guessedName };
       setLockSummary(summary);
       if (typeof sessionStorage !== "undefined" && s) sessionStorage.setItem(`otb-lockin-${code}-${s.index}`, JSON.stringify(summary));
     }
-    await refresh();
+    setJustLocked(true);
     setBusy(false);
+    refresh(); // not awaited — the screen already shows "Locked in!"; this just pulls in everyone else's progress a little sooner than the next scheduled poll
   }
 
   const others = state.roster.filter((p) => p.id !== seat.playerId);
@@ -241,7 +268,7 @@ function Controller({
         </Panel>
       )}
 
-      {!s.paused && s.state === "playing" && me && (me.answered ? (
+      {!s.paused && s.state === "playing" && me && (me.answered || justLocked ? (
         <Panel emoji="🔒" title="Locked in!">
           {lockSummary && (
             <>
@@ -311,7 +338,7 @@ function Controller({
       )}
 
       {!s.paused && s.state === "reveal" && state.reveal && revealReady && (
-        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="card mt-6 text-center">
+        <div className="card mt-6 animate-pop-in text-center">
           {me?.isMine ? (
             <>
               <p className="text-6xl">😎</p>
@@ -333,7 +360,7 @@ function Controller({
             It was sent by <span className="font-display text-sunny">{state.reveal.senderName}</span>
           </p>
           <p className="mt-4 text-sm text-white/70">Watch the big screen for the next video…</p>
-        </motion.div>
+        </div>
       )}
 
       {s.state === "finished" && (
@@ -366,17 +393,17 @@ function Controller({
 
 function Panel({ emoji, title, children }: { emoji: string; title: string; children: React.ReactNode }) {
   return (
-    <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="card mt-10 text-center">
+    <div className="card mt-10 animate-rise-in text-center">
       <p className="animate-wobble text-7xl">{emoji}</p>
       <p className="title mt-4 text-3xl">{title}</p>
       <p className="mt-2 text-white/70">{children}</p>
-    </motion.div>
+    </div>
   );
 }
 
 export default function JoinPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<main className="flex min-h-screen items-center justify-center text-white/70">Loading…</main>}>
       <JoinInner />
     </Suspense>
   );

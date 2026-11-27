@@ -61,3 +61,12 @@ body {
 .animate-wobble { animation: wobble 1.6s ease-in-out infinite; }
 @keyframes floaty { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
 .animate-floaty { animation: floaty 3s ease-in-out infinite; }
+
+/* Plain-CSS stand-ins for the two one-shot entrance animations `/join` used to pull in framer-motion just
+   for (a tiny "pop" and a "rise in") — that page is on the hot path for every single player's phone, every
+   single game, so it's worth not shipping an animation library for two keyframes. `prefers-reduced-motion`
+   is already handled globally above, the same way it is for every other CSS animation on the page. */
+@keyframes otb-pop-in { from { opacity: 0; transform: scale(0.8) } to { opacity: 1; transform: scale(1) } }
+.animate-pop-in { animation: otb-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes otb-rise-in { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+.animate-rise-in { animation: otb-rise-in 0.3s ease-out both; }
