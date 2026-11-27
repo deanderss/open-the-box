@@ -512,3 +512,18 @@ When a game finishes (the moderator taps **Finished**, or the last video's **Nex
 - Server end to end against the live database with a throwaway group (deleted afterwards): award order and winners, phones see no awards until the end, a double-tapped Next only advances one step, Skip jumps to done.
 - The ceremony UI was checked in a browser with sample awards (all four cards, the box and drumroll phase, the Next and See final scores buttons).
 - **Not yet verified:** a real game with real phones, and the sounds on an actual TV or iPhone host.
+
+## 15. Smooth TV mode, to stop dropped frames when mirroring (Nov 27 2026)
+**Why:** the host mirrors an iPhone/iPad to a TV, and screen mirroring re-encodes every page frame as H.264 over Wi-Fi. Anything else that uses the phone's CPU/GPU/radio, or changes big screen areas each frame, shows up as dropped frames.
+
+**AirPlay "Play on TV" is shelved.** From a web page, AirPlay can only carry a single native `<video>`: not TikTok/YouTube/Facebook iframes, and not the reveal or results screens. So it can't run the whole game on the TV. `AIRPLAY_FEATURE_ENABLED` stays `false` in `components/EmbedPlayer.tsx`; don't re-enable it expecting the full game.
+
+**What Smooth TV mode does** (`lib/smoothTv.ts`, stored per device in localStorage `otb-smooth-tv`; default on for iPhone/iPad, off elsewhere; only the host screen reads it):
+- The next video is **not preloaded while a video plays**; it loads at the reveal (`StageView` only passes `next` when `state === "reveal"`). Next is still instant after a normal reveal; a Skip or very fast Next loads fresh.
+- The reveal and awards spotlight rays are still, not spinning (`GrandReveal`, `AwardsCeremony`).
+- Confetti is about a third as dense with shorter life (`setLightConfetti` in `lib/confetti.ts`, set by the host page).
+- Toggle: lobby card "📺 Playing on a TV?" (with the mirroring tips) and a 📺 item in the in-game More menu / button row.
+
+**Frame meter:** open the host screen with `?fps=1` for a corner readout (fps, slow frames over 25ms, worst gap, long tasks). Drops on the phone itself point at the app; a clean meter with a choppy TV points at Wi-Fi or the Apple TV.
+
+**Verified:** `tsc`, `next build`; in a browser preview, preload gating on/off, rays static on vs rotating off, meter renders. **Not verified:** a real iPhone mirroring to a TV (compare `?fps=1` with Smooth TV on vs off); confetti counts were not logged, only coded.

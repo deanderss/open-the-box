@@ -5,6 +5,7 @@ import Avatar from "@/components/Avatar";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
 import type { useSeat } from "@/components/useSeat";
 import type { GameState } from "@/components/useGameState";
+import { useSmoothTv } from "@/lib/smoothTv";
 
 // Only the lobby ever needs a QR code, so it's loaded on first use instead of sitting in the main bundle.
 const QRCodeSVG = dynamic(() => import("qrcode.react").then((m) => m.QRCodeSVG), {
@@ -28,6 +29,7 @@ export default function LobbyView({
   onKick: (playerId: string, name: string) => void;
 }) {
   const s = state.session;
+  const [smoothTv, setSmoothTv] = useSmoothTv();
   return (
     <section className="flex flex-1 flex-col items-center justify-center gap-8 px-6 pb-10 lg:flex-row lg:gap-16">
       <div className="flex flex-col items-center text-center">
@@ -41,6 +43,23 @@ export default function LobbyView({
         <p className="mt-4 font-display text-6xl tracking-[0.35em] text-white">{s.code}</p>
       </div>
       <div className="flex w-full max-w-md flex-col gap-4">
+        <div className="card">
+          <label className="flex cursor-pointer items-center justify-between gap-3">
+            <span>
+              <span className="title block text-xl">📺 Playing on a TV?</span>
+              <span className="text-sm text-white/70">Smooth TV mode keeps screen mirroring from dropping frames.</span>
+            </span>
+            <input type="checkbox" className="h-6 w-6 accent-[#3DDC97]" checked={smoothTv} onChange={(e) => setSmoothTv(e.target.checked)} aria-label="Smooth TV mode" />
+          </label>
+          {smoothTv && (
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-white/80">
+              <li>Turn off Low Power Mode, and keep the phone plugged in.</li>
+              <li>Close other apps and turn on Do Not Disturb.</li>
+              <li>Put the Apple TV on Ethernet or 5 GHz Wi-Fi.</li>
+              <li>The next video loads at the reveal, and the reveal effects are calmer.</li>
+            </ul>
+          )}
+        </div>
         <div className="card">
           <p className="title text-2xl">Players in ({state.players.length})</p>
           <div className="mt-4 flex min-h-[120px] flex-wrap gap-3">

@@ -5,6 +5,7 @@ import Avatar from "@/components/Avatar";
 import LiveCountdown from "@/components/LiveCountdown";
 import TimerBar from "@/components/TimerBar";
 import EmbedPlayer from "@/components/EmbedPlayer";
+import { useSmoothTv } from "@/lib/smoothTv";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
 import type { useSeat } from "@/components/useSeat";
 import type { GameState } from "@/components/useGameState";
@@ -45,6 +46,7 @@ export default function StageView({
 }) {
   const s = state.session;
   const [moreOpen, setMoreOpen] = useState(false);
+  const [smoothTv, setSmoothTv] = useSmoothTv();
   const [answerOpen, setAnswerOpen] = useState(false);
   const [answerStatus, setAnswerStatus] = useState({ visible: false, answered: false });
   // Stable reference: HostPlayerPanel re-reports its status on every real state change, and a fresh
@@ -120,6 +122,15 @@ export default function StageView({
               <button className="btn btn-sky btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
                 <span aria-hidden>⏸</span>
               </button>
+              <button
+                className={`btn btn-sm ${smoothTv ? "btn-mint" : "btn-ghost"}`}
+                tabIndex={visible ? undefined : -1}
+                aria-pressed={smoothTv}
+                title={smoothTv ? "Smooth TV mode is on (calmer effects, no background loading). Tap to turn off." : "Playing on a TV by mirroring? Turn on Smooth TV mode."}
+                onClick={() => setSmoothTv(!smoothTv)}
+              >
+                <span aria-hidden>📺</span>
+              </button>
             </div>
             <div className="relative sm:hidden">
               <button
@@ -163,6 +174,9 @@ export default function StageView({
                   >
                     <span aria-hidden>⏸</span> Pause
                   </button>
+                  <button className="btn btn-ghost btn-sm whitespace-nowrap" aria-pressed={smoothTv} onClick={() => setSmoothTv(!smoothTv)}>
+                    <span aria-hidden>📺</span> Smooth TV: {smoothTv ? "on" : "off"}
+                  </button>
                 </div>
               )}
             </div>
@@ -173,7 +187,7 @@ export default function StageView({
         </div>
       </div>
     ),
-    [s.remainingMs, fetchedAt, s.windowSeconds, s.state, state.answered, state.eligible, busy, answerStatus.visible, moreOpen, act, handleSkip, setReloadN, onPauseExit, setWantFull]
+    [s.remainingMs, fetchedAt, s.windowSeconds, s.state, state.answered, state.eligible, busy, answerStatus.visible, moreOpen, smoothTv, setSmoothTv, act, handleSkip, setReloadN, onPauseExit, setWantFull]
   );
 
   // `state.upNext` is a freshly-parsed object on every poll response even when nothing about it actually
@@ -184,7 +198,11 @@ export default function StageView({
     ? [state.upNext.embedUrl, state.upNext.directUrl ?? "", state.upNext.blocked ?? "", state.upNext.aspect ?? ""]
     : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const nextMedia = useMemo(() => state.upNext, upNextKeyParts ? [upNextKeyParts.join("|")] : [null]);
+  const upNextMedia = useMemo(() => state.upNext, upNextKeyParts ? [upNextKeyParts.join("|")] : [null]);
+  // Smooth TV mode: don't load the next video in the background while this one is playing. That load (a whole
+  // hidden player, or an MP4 download) competes with playback and the mirroring stream for CPU and Wi-Fi.
+  // It starts at the reveal instead, which has several seconds of reveal animation and results to finish in.
+  const nextMedia = smoothTv && s.state !== "reveal" ? null : upNextMedia;
 
   if (!state.video) return null;
   return (

@@ -13,6 +13,9 @@ import LobbyView from "@/components/host/LobbyView";
 import PausedView from "@/components/host/PausedView";
 import StageView from "@/components/host/StageView";
 import Finale from "@/components/host/Finale";
+import FrameMeter from "@/components/host/FrameMeter";
+import { useSmoothTv } from "@/lib/smoothTv";
+import { setLightConfetti } from "@/lib/confetti";
 
 // The grand-reveal slot machine (plus its confetti/sound effects) is only ever needed once per video, well
 // after the page has loaded, so it's loaded on first use instead of sitting in the page's initial bundle.
@@ -21,7 +24,15 @@ const AwardsCeremony = dynamic(() => import("@/components/host/AwardsCeremony"),
 
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
-  const sessionId = useSearchParams().get("session");
+  const params = useSearchParams();
+  const sessionId = params.get("session");
+  const showMeter = params.get("fps") === "1"; // frame-drop readout for testing on the real phone
+  // Smooth TV mode (lib/smoothTv.ts): lighter confetti here; StageView and the reveal screens read it themselves.
+  const [smoothTv] = useSmoothTv();
+  useEffect(() => {
+    setLightConfetti(smoothTv);
+    return () => setLightConfetti(false);
+  }, [smoothTv]);
   // Widens to a 5s poll once the realtime broadcast channel is confirmed live (a nudge gets here faster
   // anyway) and drops straight back to 2s the instant it isn't — see useGameState's own comment.
   const { state, error, refresh, fetchedAt, reconnecting, applyState } = useGameState({ sessionId }, 2000, 5000);
@@ -234,6 +245,7 @@ function HostInner({ groupId }: { groupId: string }) {
 
   return (
     <main className="flex min-h-screen flex-col">
+      {showMeter && <FrameMeter />}
       <HostHeader groupId={groupId} state={gs} origin={origin} busy={busy} reconnecting={reconnecting} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
 

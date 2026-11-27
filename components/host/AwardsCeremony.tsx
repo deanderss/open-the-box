@@ -10,6 +10,7 @@ import { isMuted, playDrumroll, playFanfare, playSadTrombone, setMuted, stopSfx 
 import { AWARD_INFO, type Award } from "@/lib/awards";
 import Avatar from "@/components/Avatar";
 import BoxMascot from "@/components/BoxMascot";
+import { useSmoothTv } from "@/lib/smoothTv";
 
 const WOBBLE_MS = 900; // box shakes before the lid pops
 const DRUM_MS = 1900; // drumroll before the winner appears
@@ -79,6 +80,8 @@ export default function AwardsCeremony({
   const [phase, setPhase] = useState<"wobble" | "drum" | "boom">("wobble");
   const [muted, setMutedState] = useState(false);
   useEffect(() => setMutedState(isMuted()), []);
+  // Smooth TV mode: still spotlight (a spinning full-screen gradient changes every pixel every frame).
+  const [smoothTv] = useSmoothTv();
 
   // Each new award replays the show from the top.
   const kindRef = useRef(award.kind);
@@ -117,8 +120,8 @@ export default function AwardsCeremony({
         <motion.div
           className="absolute left-1/2 top-1/2 h-[220vmax] w-[220vmax] -translate-x-1/2 -translate-y-1/2"
           style={{ background: RAYS[info.good ? "good" : "bad"] }}
-          animate={{ rotate: 360, opacity: phase === "boom" ? 0.45 : 0.2 }}
-          transition={{ rotate: { repeat: Infinity, duration: phase === "boom" ? 14 : 8, ease: "linear" }, opacity: { duration: 0.4 } }}
+          animate={{ rotate: smoothTv ? 0 : 360, opacity: phase === "boom" ? 0.45 : 0.2 }}
+          transition={{ rotate: smoothTv ? { duration: 0 } : { repeat: Infinity, duration: phase === "boom" ? 14 : 8, ease: "linear" }, opacity: { duration: smoothTv ? 0 : 0.4 } }}
         />
         <div className="absolute inset-0" style={{ background: "radial-gradient(circle at center, rgba(18,10,36,0) 25%, rgba(18,10,36,0.9) 85%)" }} />
       </div>

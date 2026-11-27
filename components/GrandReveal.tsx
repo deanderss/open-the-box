@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { fireConfetti } from "@/lib/confetti";
 import Avatar from "./Avatar";
+import { useSmoothTv } from "@/lib/smoothTv";
 import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx";
 import { REVEAL_STEPS as STEPS, revealDelayFor as delayFor, REVEAL_SUSPENSE_MS as REEL_MS } from "@/lib/revealTiming";
 
@@ -37,6 +38,8 @@ export default function GrandReveal({
   const [step, setStep] = useState(0);
   const [muted, setMutedState] = useState(false);
   useEffect(() => setMutedState(isMuted()), []);
+  // Smooth TV mode: a still spotlight, since a spinning full-screen gradient changes every pixel every frame.
+  const [smoothTv] = useSmoothTv();
 
   // The parent re-renders on every poll, so keep the latest callback in a ref and freeze the reel at mount.
   const doneRef = useRef(onDone);
@@ -103,8 +106,8 @@ export default function GrandReveal({
       <motion.div
         className="pointer-events-none absolute left-1/2 top-1/2 h-[220vmax] w-[220vmax] -translate-x-1/2 -translate-y-1/2 opacity-40"
         style={{ background: "conic-gradient(from 0deg, transparent 0 8%, rgba(255,210,63,0.35) 10%, transparent 12% 20%, rgba(255,79,163,0.35) 22%, transparent 24% 32%, rgba(63,193,255,0.35) 34%, transparent 36% 44%, rgba(255,210,63,0.35) 46%, transparent 48% 56%, rgba(255,79,163,0.35) 58%, transparent 60% 68%, rgba(63,193,255,0.35) 70%, transparent 72% 80%, rgba(61,220,151,0.3) 82%, transparent 84% 100%)" }}
-        animate={{ rotate: 360 }}
-        transition={{ repeat: Infinity, duration: phase === "boom" ? 14 : 8, ease: "linear" }}
+        animate={smoothTv ? { rotate: 0 } : { rotate: 360 }}
+        transition={smoothTv ? { duration: 0 } : { repeat: Infinity, duration: phase === "boom" ? 14 : 8, ease: "linear" }}
       />
       <div className="pointer-events-none absolute inset-0" style={{ background: "radial-gradient(circle at center, rgba(18,10,36,0) 25%, rgba(18,10,36,0.9) 85%)" }} />
 

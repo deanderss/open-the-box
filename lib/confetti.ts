@@ -24,7 +24,17 @@ async function load(): Promise<ConfettiFn> {
  */
 export async function fireConfetti(options: Options = {}) {
   const confetti = await load();
-  confetti({ disableForReducedMotion: true, ...options });
+  confetti({ disableForReducedMotion: true, ...(lightMode ? lighten(options) : options) });
+}
+
+// "Smooth TV mode" (lib/smoothTv.ts): when the host screen is being mirrored to a TV, a third of the pieces
+// and a shorter fall is far lighter to encode. Switched on by the host page only, so phones are unaffected.
+let lightMode = false;
+export function setLightConfetti(on: boolean) {
+  lightMode = on;
+}
+function lighten(o: Options): Options {
+  return { ...o, particleCount: Math.max(10, Math.round((o.particleCount ?? 50) / 3)), ticks: Math.min(o.ticks ?? 200, 140) };
 }
 
 /** For effects that build a custom particle shape (e.g. the submit page's "stink" rain of flies). */
