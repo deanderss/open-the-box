@@ -36,7 +36,6 @@ export const POST = handle(async (req) => {
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
   let room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
 
-  const results: { url: string; status: "added" | "duplicate" | "invalid" | "full"; message?: string }[] = [];
   // Resolve every link first, then ask the platforms (in parallel) whether each video can play inside the game.
   // That only decides the heads-up note: every link in a supported format is accepted either way, because the host
   // can open the awkward ones in the app during the game.
@@ -48,48 +47,87 @@ export const POST = handle(async (req) => {
       return { raw, parsed, media };
     })
   );
+
+  // A duplicate can be one already sitting in the box, or the same link pasted twice in this one paste — check
+  // both with a single lookup instead of finding out one row at a time. Everything after that is figured out
+  // up front (room, duplicate, invalid) so the only write below is one bulk insert for whatever's actually new,
+  // instead of up to 15 sequential single-row inserts for one submission.
+  const candidateUrls = Array.from(new Set(resolved.flatMap((r) => (r.parsed ? [r.parsed.sourceUrl] : []))));
+  const { data: existing } = candidateUrls.length ? await db.from("videos").select("source_url").eq("group_id", g.id).in("source_url", candidateUrls) : { data: [] };
+  const existingSet = new Set((existing || []).map((r) => r.source_url as string));
+
+  type Parsed = NonNullable<(typeof resolved)[number]["parsed"]>;
+  type Media = (typeof resolved)[number]["media"];
+  const outcomes: { raw: string; parsed: Parsed | null; media: Media; status: "added" | "duplicate" | "invalid" | "full" }[] = [];
+  const toInsert: { parsed: Parsed; media: Media }[] = [];
+  const seenInBatch = new Set<string>();
+  let slotsLeft = room;
   for (const { raw, parsed, media } of resolved) {
-    const playable = media?.playability ?? "unknown";
     if (!parsed) {
-      results.push({
+      outcomes.push({ raw, parsed, media, status: "invalid" });
+    } else if (existingSet.has(parsed.sourceUrl) || seenInBatch.has(parsed.sourceUrl)) {
+      outcomes.push({ raw, parsed, media, status: "duplicate" });
+    } else if (slotsLeft <= 0) {
+      outcomes.push({ raw, parsed, media, status: "full" });
+    } else {
+      seenInBatch.add(parsed.sourceUrl);
+      slotsLeft--;
+      toInsert.push({ parsed, media });
+      outcomes.push({ raw, parsed, media, status: "added" });
+    }
+  }
+
+  if (toInsert.length) {
+    // `ignoreDuplicates` (ON CONFLICT ... DO NOTHING) is a safety net for the rare race where another request
+    // adds the same link between the lookup above and this write — RETURNING only ever reports rows a DO
+    // NOTHING statement actually touched, so anything missing from it lost that race and gets relabeled below
+    // instead of being reported as added.
+    const { data: inserted, error } = await db
+      .from("videos")
+      .upsert(
+        toInsert.map(({ parsed, media }) => ({
+          group_id: g.id,
+          submitted_by: player.id,
+          platform: parsed.platform,
+          source_url: parsed.sourceUrl,
+          embed_url: parsed.embedUrl,
+          // Saved now so the host screen can show the restricted/gone flag and the Instagram crop aspect
+          // without re-checking the platform live on every poll during the game.
+          playability: media?.playability ?? null,
+          aspect: media?.aspect ?? null,
+        })),
+        { onConflict: "group_id,source_url", ignoreDuplicates: true }
+      )
+      .select("source_url");
+    if (error) throw new HttpError(503, "The game service is having trouble — try again in a moment");
+    const insertedSet = new Set((inserted || []).map((r) => r.source_url as string));
+    outcomes.forEach((o) => {
+      if (o.status === "added" && o.parsed && !insertedSet.has(o.parsed.sourceUrl)) o.status = "duplicate";
+    });
+  }
+
+  const results = outcomes.map(({ raw, parsed, media, status }) => {
+    if (status === "invalid") {
+      return {
         url: raw,
-        status: "invalid",
+        status,
         message: needsExpansion(raw)
           ? "We couldn't open that share link. Open the video in your browser, copy the address from the address bar and paste that instead"
           : undefined,
-      });
-      continue;
+      };
     }
-    if (room <= 0) {
-      results.push({ url: raw, status: "full" });
-      continue;
-    }
-    const { error } = await db.from("videos").insert({
-      group_id: g.id,
-      submitted_by: player.id,
-      platform: parsed.platform,
-      source_url: parsed.sourceUrl,
-      embed_url: parsed.embedUrl,
-      // Saved now so the host screen can show the restricted/gone flag and the Instagram crop aspect
-      // without re-checking the platform live on every poll during the game.
-      playability: media?.playability ?? null,
-      aspect: media?.aspect ?? null,
-    });
-    if (error) {
-      results.push({ url: raw, status: error.code === "23505" ? "duplicate" : "invalid" });
-    } else {
-      room--;
-      results.push({
-        url: raw,
-        status: "added",
-        message:
-          playable === "restricted"
-            ? `Added! Heads up: ${siteName(parsed.platform)} only plays this one in its own app, so the host will open it there`
-            : playable === "gone"
-              ? `Added! Heads up: ${siteName(parsed.platform)} says this one may be removed or private, so the host will check it in the app`
-              : undefined,
-      });
-    }
-  }
+    if (status !== "added" || !parsed) return { url: raw, status };
+    const playable = media?.playability ?? "unknown";
+    return {
+      url: raw,
+      status,
+      message:
+        playable === "restricted"
+          ? `Added! Heads up: ${siteName(parsed.platform)} only plays this one in its own app, so the host will open it there`
+          : playable === "gone"
+            ? `Added! Heads up: ${siteName(parsed.platform)} says this one may be removed or private, so the host will check it in the app`
+            : undefined,
+    };
+  });
   return json({ results, added: results.filter((r) => r.status === "added").length });
 });

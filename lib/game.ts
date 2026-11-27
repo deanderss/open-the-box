@@ -2,7 +2,7 @@ import { supabaseAdmin } from "./supabase-server";
 import { shuffle } from "./util";
 import { checkMedia, type Media } from "./playable";
 import { resolveInstagramVideo, hasSessionId } from "./igDirect";
-import { purgeUpload } from "./uploads";
+import { purgeUpload, uploadsEnabled } from "./uploads";
 import { SENDER_BONUS } from "./points";
 import { HttpError } from "./api";
 import { background } from "./background";
@@ -41,6 +41,14 @@ export async function getWindowSeconds() {
 }
 
 const DB_DOWN = "The game service is having trouble — try again in a moment";
+
+// `purgeUpload()` is already a no-op for every video that isn't an upload — but finding that out still costs
+// one DB round trip, paid on every single Next/Skip/Finish for the whole game. Uploads default to OFF, so in
+// the common case that's a pure waste; skip the call (and its query) entirely instead of relying on
+// `purgeUpload`'s own internal check whenever this deployment doesn't even have the feature turned on.
+const maybePurgeUpload = (videoId: string | null) => {
+  if (uploadsEnabled()) background(() => purgeUpload(videoId));
+};
 
 export async function getSessionByCode(code: string, includeRecentlyEnded = false): Promise<SessionRow | null> {
   const { data, error } = await db()
@@ -216,7 +224,7 @@ export async function nextVideo(s: SessionRow) {
   // happen at all. Deleting the just-finished video's uploaded file is real work (a storage API call) that
   // nobody needs to wait on; it happens just as reliably after the response is already on its way back.
   const session = await showVideoAt(s, s.current_index + 1);
-  background(() => purgeUpload(justFinishedId));
+  maybePurgeUpload(justFinishedId);
   return { session };
 }
 
@@ -226,7 +234,7 @@ export async function skipVideo(s: SessionRow) {
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
   const session = await showVideoAt(s, s.current_index + 1);
-  background(() => purgeUpload(vid)); // a skipped personal video is never shown again, so its file goes too
+  maybePurgeUpload(vid); // a skipped personal video is never shown again, so its file goes too
   return { session };
 }
 
@@ -268,7 +276,7 @@ export async function finishSession(s: SessionRow) {
   if (s.state === "playing") s = await doReveal(s);
   const lastId = currentVideoId(s);
   const result = await endSession(s);
-  background(() => purgeUpload(lastId)); // the last video has been played and rated
+  maybePurgeUpload(lastId); // the last video has been played and rated
   return result;
 }
 
@@ -382,11 +390,18 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   // Skipped once the game is finished: `current_index` there points at the last video played, but the
   // response nulls `video`/`upNext` out anyway, so there is nothing to look up a live playability check for.
   const relevantIds = Array.from(new Set([...sIn.video_order.slice(0, Math.max(0, sIn.current_index + 1)), ...(needsNext ? [sIn.video_order[nextIdx]] : [])]));
+  // `direct_url`/`direct_url_expires` are only ever read by `mediaInfo()` below, which only ever runs for the
+  // host, and only for the current + next video — every other video in `relevantIds` (everything already
+  // played this game) never needs them again. Carrying those two columns on the bulk `relevantIds` query for
+  // every viewer, every poll, for the whole length of a long game was pure waste; fetch them separately, only
+  // for the 1-2 ids that actually need them, gated the same way `needsNext` already is below.
+  const wantsDirect = viewer.kind === "host" && (sIn.state === "playing" || sIn.state === "reveal");
+  const directIds = wantsDirect ? Array.from(new Set([vid, needsNext ? sIn.video_order[nextIdx] : null].filter((x): x is string => !!x))) : [];
 
   // Only the *current* video's responses are needed here (for "how many have answered" and the reveal's
   // guess list) — the full-history sum used to live in this same query, but that's now a tiny server-side
   // aggregate (`session_correct_counts`, kicked off below) instead of a row-per-answer-ever payload.
-  const [groupRes, rosterRes, spRes, respRes, vidsRes] = await Promise.all([
+  const [groupRes, rosterRes, spRes, respRes, vidsRes, directRes] = await Promise.all([
     db().from("groups").select("id,name,color,emoji").eq("id", sIn.group_id).single(),
     db().from("players").select("id,display_name,avatar_color").eq("group_id", sIn.group_id).eq("active", true).order("display_name"),
     db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", sIn.id).order("joined_at"),
@@ -396,16 +411,23 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     relevantIds.length
       ? db()
           .from("videos")
-          .select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect,direct_url,direct_url_expires")
+          .select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect")
           .in("id", relevantIds)
       : Promise.resolve({ data: [] as VideoRow[], error: null }),
+    directIds.length
+      ? db().from("videos").select("id,direct_url,direct_url_expires").in("id", directIds)
+      : Promise.resolve({ data: [] as Pick<VideoRow, "id" | "direct_url" | "direct_url_expires">[], error: null }),
   ]);
-  if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error) throw new HttpError(503, DB_DOWN);
+  if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error || directRes.error) throw new HttpError(503, DB_DOWN);
   const group = groupRes.data;
   const roster = rosterRes.data;
   const sp = spRes.data;
   const resps = respRes.data;
   const vidsMap = new Map(((vidsRes.data as VideoRow[]) || []).map((v) => [v.id, v]));
+  (directRes.data || []).forEach((r) => {
+    const row = vidsMap.get(r.id as string);
+    if (row) Object.assign(row, { direct_url: r.direct_url, direct_url_expires: r.direct_url_expires });
+  });
 
   const joinedIds = new Set((sp || []).map((r) => r.player_id as string));
 

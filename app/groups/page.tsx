@@ -8,9 +8,18 @@ export const dynamic = "force-dynamic";
 export default async function GroupsPage() {
   const { sb, mod } = await getMe();
   const { data: groups } = await sb.from("groups").select("id,name,color,emoji,owner_id,created_at").order("created_at");
-  const { data: queued } = await sb.from("videos").select("group_id").eq("status", "queued");
-  const counts = new Map<string, number>();
-  (queued || []).forEach((v) => counts.set(v.group_id, (counts.get(v.group_id) || 0) + 1));
+  // One "how many in the box" count per group card — this used to download a full group_id-per-row list of
+  // every queued video across every group on the whole site just to tally it in JS. A `head: true` count
+  // query returns nothing but a number in its response header, and running one per group in parallel costs
+  // about the same as the single bloated query did, without the per-row payload or the cross-tenant scan.
+  const counts = new Map<string, number>(
+    await Promise.all(
+      (groups || []).map(async (g) => {
+        const { count } = await sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
+        return [g.id as string, count ?? 0] as const;
+      })
+    )
+  );
 
   return (
     <>
