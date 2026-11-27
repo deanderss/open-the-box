@@ -528,3 +528,26 @@ When a game finishes (the moderator taps **Finished**, or the last video's **Nex
 **Frame meter:** open the host screen with `?fps=1` for a corner readout (fps, slow frames over 25ms, worst gap, long tasks). Drops on the phone itself point at the app; a clean meter with a choppy TV points at Wi-Fi or the Apple TV.
 
 **Verified:** `tsc`, `next build`; in a browser preview, preload gating on/off, rays static on vs rotating off, meter renders. **Not verified:** a real iPhone mirroring to a TV (compare `?fps=1` with Smooth TV on vs off); confetti counts were not logged, only coded.
+
+## 16. Full review fixes (Nov 27 2026)
+A full review in four phases, each shipped separately: A game experience, B security, C cost/database, D cleanliness. Rule: when game experience and performance conflict, game experience wins.
+
+### Phase A: game experience
+- **Polls give up after 8s** (`useGameState`, `AbortController`): a hung request after a phone wakes no longer blocks every later poll; it counts as a miss ("Reconnecting…").
+- **Phones keep polling during the awards** (every 5s while `awardsStep < awardsCount`) instead of relying on realtime alone.
+- **Saved seats survive a flaky re-check** (`useSeat`): 3 tries with backoff; only 403/404/409 drop the seat; after that the saved seat is used and the regular poll's `viewerValid` still catches a truly gone seat. A corrupt saved value is removed instead of breaking the page.
+- **Host wake lock stays on through the awards** (TV mirroring no longer drops when the host phone auto-locks).
+- **Sound** (`lib/sfx.ts`): all sounds go through one output bus; `stopSfx()` disconnects it, so a skipped drumroll really stops. The audio engine resumes from iOS's `interrupted` state, and `navigator.audioSession.type = "playback"` where supported so the silent switch doesn't mute the reveal.
+- **Native video is muted during the grand reveal** (owner's choice; `silence` prop on `EmbedPlayer` → `StageNativeVideo`), and its previous sound state comes back after. Embeds can't be muted from the page.
+- **Sideways phones** (`components/useShortScreen.ts`, `max-height: 500px`): smaller reel/winner in `GrandReveal`, smaller award card in `AwardsCeremony` (which can also scroll as a last resort). Checked at 844×390: everything including "Next award" fits.
+- **"⋯" button** brings back hidden fullscreen controls (TikTok/YouTube/Facebook players swallow taps on the video). It acts on click and stops the press, so the same tap can't land on a button that appears.
+- **Timer bar ignores Reduce Motion** (inline `!important` transition): it's the game clock, not decoration.
+- **Reveal guesses** go two columns from `sm` (capped at 60vh) so a sideways phone on the TV shows more.
+- **Smaller fixes:**
+  - "↻ Reload" also restarts native/upload/Instagram videos.
+  - A phone that can't load its game shows the error with "Try again" and "Different code", not "Connecting…" forever. The saved seat is kept.
+  - A failed Start/Next/Resume exits browser fullscreen if the page shouldn't be fullscreen.
+  - A failed Instagram link is remembered by URL (`failedUrl`), with no one-render embed flicker on the next clip.
+  - The room-code box has autocorrect and spellcheck turned off.
+
+**Verified:** `tsc`, `next build`; browser preview of sideways awards and reveal, the timer bar under a forced reduce-motion rule, and the "⋯" press/click behaviour. **Not verified on real devices:** iOS audio session and interrupted-resume, wake lock through awards, phone sleep and wake mid-game.

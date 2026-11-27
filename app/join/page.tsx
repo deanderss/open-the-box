@@ -85,7 +85,20 @@ function JoinInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clear, confirmedCode]);
 
-  if (seat && confirmedCode) return <Controller code={confirmedCode} seat={seat} submitAnswer={submitAnswer} onKicked={handleKicked} />;
+  if (seat && confirmedCode)
+    return (
+      <Controller
+        code={confirmedCode}
+        seat={seat}
+        submitAnswer={submitAnswer}
+        onKicked={handleKicked}
+        onLeave={() => {
+          // The saved seat stays in storage: typing the same code again picks it straight back up.
+          setRoster(null);
+          setConfirmedCode(null);
+        }}
+      />
+    );
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
@@ -105,6 +118,8 @@ function JoinInner() {
             value={code}
             autoCapitalize="characters"
             autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
             onChange={(e) => setCode(e.target.value.replace(/[^a-z]/gi, "").toUpperCase())}
             placeholder="ABCD"
           />
@@ -151,15 +166,18 @@ function Controller({
   seat,
   submitAnswer,
   onKicked,
+  onLeave,
 }: {
   code: string;
   seat: Seat;
   submitAnswer: (rating: number | null, guessId: string | null) => Promise<SeatResult>;
   onKicked: () => void;
+  /** back to the room-code box (the game this phone was in can't be loaded) */
+  onLeave: () => void;
 }) {
   // Widens to an 8s poll once the realtime broadcast channel is confirmed live (a nudge gets here faster
   // anyway) and drops straight back to 2s the instant it isn't — see useGameState's own comment.
-  const { state, refresh, fetchedAt, reconnecting } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000, 8000);
+  const { state, error, refresh, fetchedAt, reconnecting } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000, 8000);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -214,7 +232,29 @@ function Controller({
     if (state && !state.viewerValid && state.session.state !== "finished") onKicked();
   }, [state, onKicked]);
 
-  if (!state || !s) return <main className="flex min-h-screen items-center justify-center text-white/70">Connecting…</main>;
+  if (!state || !s)
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-5 text-center text-white/70">
+        {/* Never just "Connecting…" forever: say what's wrong and give a way out. */}
+        {error ? (
+          <p className="text-[#FFB3B3]">{error}</p>
+        ) : reconnecting ? (
+          <p>Still connecting… check your Wi-Fi or signal.</p>
+        ) : (
+          <p>Connecting…</p>
+        )}
+        {(error || reconnecting) && (
+          <div className="flex gap-3">
+            <button className="btn btn-yellow btn-sm" onClick={() => refresh()}>
+              Try again
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onLeave}>
+              Different code
+            </button>
+          </div>
+        )}
+      </main>
+    );
   const me = state.me;
 
   async function lockIn() {

@@ -147,11 +147,17 @@ function StageNativeVideo({
   videoRef,
   src,
   onError,
+  silence = false,
+  reloadKey = 0,
 }: {
   videoRef: RefObject<HTMLVideoElement>;
   /** null: nothing native to show right now — the element stays mounted, just paused and hidden by the caller */
   src: string | null;
   onError?: () => void;
+  /** mute while something else on screen wants the sound (the grand reveal); put back as it was afterwards */
+  silence?: boolean;
+  /** bump to restart the clip from the top (the "Reload video" button) */
+  reloadKey?: number;
 }) {
   const [ready, setReady] = useState(false);
   const [needsTap, setNeedsTap] = useState(false);
@@ -196,6 +202,40 @@ function StageNativeVideo({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, videoRef]);
+
+  // The grand reveal has its own drumroll and fanfare: mute the clip underneath while it runs, then give it
+  // back exactly the sound state it had (a clip the browser had already forced muted stays muted).
+  const mutedBefore = useRef<boolean | null>(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (silence) {
+      if (mutedBefore.current === null) mutedBefore.current = v.muted;
+      v.muted = true;
+    } else if (mutedBefore.current !== null) {
+      v.muted = mutedBefore.current;
+      mutedBefore.current = null;
+    }
+  }, [silence, videoRef]);
+
+  // "Reload video": the iframe players remount; the native clip reloads its file and plays from the top.
+  const firstReload = useRef(true);
+  useEffect(() => {
+    if (firstReload.current) {
+      firstReload.current = false;
+      return;
+    }
+    const v = videoRef.current;
+    if (!v || !src) return;
+    firedRef.current = false;
+    setReady(false);
+    v.load();
+    v.play().catch(() => {
+      v.muted = true;
+      v.play().then(() => setNeedsTap(true)).catch(() => failRef.current());
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   // A dead/expired link, or a connection that never progresses, doesn't fire any event at all: give up and
   // let the caller fall back after a few seconds rather than sit on a black screen forever.
@@ -572,6 +612,7 @@ function EmbedPlayer({
   overlay,
   pinOverlay = false,
   reloadKey = 0,
+  silence = false,
 }: {
   embedUrl: string;
   platform: string;
@@ -585,12 +626,16 @@ function EmbedPlayer({
   className?: string;
   fullscreen?: boolean;
   /** called with whether the overlay is currently in its full (true) or auto-hidden, minimal (false) state —
-   *  see the `overlayVisible` effect below */
-  overlay?: (visible: boolean) => ReactNode;
+   *  see the `overlayVisible` effect below. `show` brings the full overlay back (for a "⋯" button: taps on
+   *  an embedded player go into its iframe and never reach this page, so tapping the video can't). */
+  overlay?: (visible: boolean, show: () => void) => ReactNode;
   /** keep the full overlay up regardless of the idle timer (e.g. a sheet or menu opened from it is still open) */
   pinOverlay?: boolean;
   /** bump to reload the visible video's iframe (the "Reload video" button) */
   reloadKey?: number;
+  /** mute the native clip (uploads, resolved Instagram) while the grand reveal is on screen. Embedded players
+   *  (TikTok, YouTube, Facebook) live in cross-origin iframes the page can't mute. */
+  silence?: boolean;
 }) {
   const current = useMemo<Media>(
     () => ({ embedUrl, platform, sourceUrl, aspect, blocked, directUrl }),
@@ -602,12 +647,13 @@ function EmbedPlayer({
   // The current clip plays natively unless it's an Instagram link that already failed once at runtime
   // (expired, or the CDN refused it) — then it falls back to the iframe Slot below (which shows the "open it
   // in the app" panel instead, if the reel is also known `blocked`). Resets whenever a new clip takes over.
-  const [directFailed, setDirectFailed] = useState(false);
-  useEffect(() => setDirectFailed(false), [embedUrl]);
-  const useDirect = platform === "instagram" && !!directUrl && !directFailed;
+  // Remembered by link rather than as a flag reset in an effect, so a new clip never spends one render still
+  // marked "failed" (which briefly flashed the embed fallback before the native video took over).
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const useDirect = platform === "instagram" && !!directUrl && failedUrl !== directUrl;
   const isNativeNow = isUpload || useDirect;
   const nativeSrc = isNativeNow ? (isUpload ? embedUrl : directUrl!) : null;
-  const onDirectError = useCallback(() => setDirectFailed(true), []);
+  const onDirectError = useCallback(() => setFailedUrl(directUrl ?? null), [directUrl]);
 
   const [settledUrls, setSettledUrls] = useState<ReadonlySet<string>>(() => new Set());
   const onSettled = useCallback((url: string) => setSettledUrls((s) => (s.has(url) ? s : new Set(s).add(url))), []);
@@ -758,7 +804,7 @@ function EmbedPlayer({
           <Slot key={m.embedUrl} media={m} active={m.embedUrl === embedUrl} fullscreen={fullscreen} vp={vp} reloadSignal={reloadKey} onSettled={onSettled} />
         ))}
 
-        {/* The moment an Instagram direct link fails at runtime, `directFailed` flips `isNativeNow` false above,
+        {/* The moment an Instagram direct link fails at runtime, `failedUrl` flips `isNativeNow` false above,
             this wrapper hides, and the iframe Slot (re-added to `slots`) takes over — showing the blocked panel
             itself if the reel is also known restricted/gone, exactly as if it had never resolved a direct link
             at all. So this wrapper never needs its own copy of that fallback. */}
@@ -767,7 +813,7 @@ function EmbedPlayer({
           className="absolute inset-0 overflow-hidden bg-black"
           style={{ zIndex: isNativeNow ? 2 : 0, opacity: isNativeNow ? 1 : 0, pointerEvents: isNativeNow ? "auto" : "none" }}
         >
-          <StageNativeVideo videoRef={nativeVideoRef} src={nativeSrc} onError={useDirect ? onDirectError : undefined} />
+          <StageNativeVideo videoRef={nativeVideoRef} src={nativeSrc} onError={useDirect ? onDirectError : undefined} silence={silence} reloadKey={reloadKey} />
 
           {/* While AirPlay is actually streaming the file to the TV, the phone doesn't need to keep
               decoding and redrawing the same frames locally — swap the video's visible area for a plain
@@ -792,7 +838,7 @@ function EmbedPlayer({
           className={`pointer-events-none absolute inset-x-0 top-0 z-10 pb-6 ${overlayVisible ? "bg-gradient-to-b from-black/80 via-black/40 to-transparent" : ""}`}
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
-          <div className="pointer-events-auto">{overlay(overlayVisible)}</div>
+          <div className="pointer-events-auto">{overlay(overlayVisible, wake)}</div>
         </div>
       )}
 

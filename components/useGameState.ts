@@ -60,6 +60,9 @@ export type GameState = {
  * Deep-equal, ignoring the two fields that legitimately differ on every single poll (the live countdown
  * snapshot) — so a poll where nothing actually happened doesn't force a full re-render of the page.
  */
+const POLL_TIMEOUT_MS = 8000;
+const CEREMONY_POLL_MS = 5000;
+
 function sameExceptTimers(a: GameState | null, b: GameState): boolean {
   if (!a) return false;
   const strip = (x: GameState) => ({ ...x, session: { ...x.session, remainingMs: 0, serverNow: 0 } });
@@ -90,6 +93,9 @@ export function useGameState(
   const lastRaw = useRef<GameState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveState = useRef<GameState["session"]["state"] | undefined>(undefined);
+  // True while the post-game awards ceremony is still running: the game is "finished", but phones are still
+  // waiting to be told it's over, so polling has to keep going instead of relying on realtime alone.
+  const inCeremony = useRef(false);
   const channelSubscribed = useRef(false);
   // A poll already in flight when the component unmounts (e.g. "Pause & exit", or a kicked phone navigating
   // away) finishes after the unmount's cleanup has already cleared the timer — its own `.then(schedule)`
@@ -97,6 +103,10 @@ export function useGameState(
   // every tick forever with stale credentials. Checked before every refresh and before every re-schedule.
   const mounted = useRef(true);
   const { code, sessionId, playerId, token } = params;
+  const track = (data: GameState) => {
+    liveState.current = data.session.state;
+    inCeremony.current = data.session.state === "finished" && data.session.awardsStep < data.session.awardsCount;
+  };
 
   const refresh = useCallback(async () => {
     if (!code && !sessionId) return;
@@ -112,15 +122,26 @@ export function useGameState(
       if (playerId && token) q.set("playerId", playerId);
       // The player token moves to a header instead of the URL, so it never shows up in server access logs
       // or browser history.
-      const res = await fetch(`/api/session/state?${q}`, { cache: "no-store", headers: playerId && token ? { "x-otb-token": token } : undefined });
-      const data = await res.json();
+      // A phone waking from sleep (or switching Wi-Fi) can leave a request hanging for a minute or more, and
+      // every poll after it would wait behind it. Give up after 8s so it counts as a miss ("Reconnecting…")
+      // and the next poll goes out fresh.
+      const ctl = new AbortController();
+      const killer = setTimeout(() => ctl.abort(), POLL_TIMEOUT_MS);
+      let data: GameState & { error?: string };
+      let res: Response;
+      try {
+        res = await fetch(`/api/session/state?${q}`, { cache: "no-store", signal: ctl.signal, headers: playerId && token ? { "x-otb-token": token } : undefined });
+        data = await res.json();
+      } finally {
+        clearTimeout(killer);
+      }
       if (!res.ok) {
         misses.current++;
         setError(data.error || "Error");
       } else {
         misses.current = 0;
         setReconnecting(false);
-        liveState.current = data.session.state;
+        track(data);
         if (!sameExceptTimers(lastRaw.current, data)) {
           setState(data);
           setFetchedAt(Date.now());
@@ -150,8 +171,14 @@ export function useGameState(
     timer.current = null;
     if (!mounted.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
-    if (liveState.current === "finished") return;
-    const ms = liveState.current === "lobby" ? Math.max(pollMs, 4000) : channelSubscribed.current ? widePollMs : pollMs;
+    if (liveState.current === "finished" && !inCeremony.current) return;
+    const ms = inCeremony.current
+      ? CEREMONY_POLL_MS
+      : liveState.current === "lobby"
+        ? Math.max(pollMs, 4000)
+        : channelSubscribed.current
+          ? widePollMs
+          : pollMs;
     timer.current = setTimeout(async () => {
       if (!mounted.current) return;
       await refresh();
@@ -227,7 +254,7 @@ export function useGameState(
   // Skip tap just to re-fetch the same thing a moment later. Goes through the same "did anything actually
   // change" + reconnecting bookkeeping as a real poll result, so it behaves identically either way.
   const applyState = useCallback((data: GameState) => {
-    liveState.current = data.session.state;
+    track(data);
     if (!sameExceptTimers(lastRaw.current, data)) {
       setState(data);
       setFetchedAt(Date.now());

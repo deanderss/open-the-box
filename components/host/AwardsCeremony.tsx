@@ -11,11 +11,13 @@ import { AWARD_INFO, type Award } from "@/lib/awards";
 import Avatar from "@/components/Avatar";
 import BoxMascot from "@/components/BoxMascot";
 import { useSmoothTv } from "@/lib/smoothTv";
+import { useShortScreen } from "@/components/useShortScreen";
 
 const WOBBLE_MS = 900; // box shakes before the lid pops
 const DRUM_MS = 1900; // drumroll before the winner appears
 
-function bigNameClass(name: string) {
+function bigNameClass(name: string, short = false) {
+  if (short) return name.length <= 9 ? "text-5xl" : name.length <= 13 ? "text-4xl" : "text-3xl";
   if (name.length <= 6) return "text-6xl sm:text-8xl";
   if (name.length <= 9) return "text-5xl sm:text-7xl";
   if (name.length <= 13) return "text-4xl sm:text-6xl";
@@ -82,6 +84,9 @@ export default function AwardsCeremony({
   useEffect(() => setMutedState(isMuted()), []);
   // Smooth TV mode: still spotlight (a spinning full-screen gradient changes every pixel every frame).
   const [smoothTv] = useSmoothTv();
+  // A phone turned sideways (often the host phone mirroring to the TV): everything shrinks so the award and
+  // its "Next award" button both fit, and the screen can scroll as a last resort.
+  const short = useShortScreen();
 
   // Each new award replays the show from the top.
   const kindRef = useRef(award.kind);
@@ -113,10 +118,10 @@ export default function AwardsCeremony({
   const isVideo = award.kind === "stinker" || award.kind === "banger";
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center overflow-clip bg-[#120a24]">
-      {/* Clipped in its own layer: the rays are far bigger than the screen, and if they made the ceremony
-          itself scrollable a click could scroll the whole thing off-center. */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+    <div className="fixed inset-0 z-[60] flex flex-col items-center overflow-y-auto overflow-x-hidden bg-[#120a24]">
+      {/* Clipped in its own fixed layer: the rays are far bigger than the screen, and must never be what makes
+          the ceremony scroll (only real content may, on a very short screen). */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <motion.div
           className="absolute left-1/2 top-1/2 h-[220vmax] w-[220vmax] -translate-x-1/2 -translate-y-1/2"
           style={{ background: RAYS[info.good ? "good" : "bad"] }}
@@ -149,12 +154,12 @@ export default function AwardsCeremony({
         </button>
       </div>
 
-      <div className="relative z-10 flex w-full flex-col items-center px-6 text-center">
+      <div className={`relative z-10 my-auto flex w-full flex-col items-center px-6 text-center ${short ? "pb-2 pt-14" : "py-20"}`}>
         <motion.p
           key={`t-${step}`}
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="title text-3xl text-white/80 sm:text-4xl"
+          className={`title text-white/80 ${short ? "text-2xl" : "text-3xl sm:text-4xl"}`}
         >
           {phase === "boom" ? (
             <>
@@ -165,7 +170,7 @@ export default function AwardsCeremony({
           )}
         </motion.p>
 
-        <div className="relative mt-6 flex min-h-[24rem] w-full flex-col items-center justify-end">
+        <div className={`relative flex w-full flex-col items-center justify-end ${short ? "mt-2 min-h-[11rem]" : "mt-6 min-h-[24rem]"}`}>
           <AnimatePresence mode="wait">
             {phase === "boom" ? (
               <motion.div
@@ -174,39 +179,44 @@ export default function AwardsCeremony({
                 animate={{ y: 0, scale: 1, opacity: 1 }}
                 exit={{ opacity: 0, scale: 0.8 }}
                 transition={{ type: "spring", stiffness: 260, damping: 16 }}
-                className="card flex w-full max-w-2xl flex-col items-center !bg-night/80 py-8"
+                className={`card flex w-full max-w-2xl flex-col items-center !bg-night/80 ${short ? "!py-3" : "py-8"}`}
               >
                 {isVideo ? (
                   <>
-                    <motion.p className="text-8xl" animate={{ rotate: [0, -8, 8, -4, 0] }} transition={{ duration: 0.8, delay: 0.3 }}>
-                      {info.emoji}
-                    </motion.p>
-                    <p className={`title mt-2 text-6xl sm:text-7xl ${info.good ? "text-sunny" : "text-mint"}`}>⭐ {award.avg.toFixed(1)}</p>
+                    {/* On a short screen the emoji sits beside the score, and "Watch again" beside the sender. */}
+                    <div className={short ? "flex items-center gap-3" : "contents"}>
+                      <motion.p className={short ? "text-5xl" : "text-8xl"} animate={{ rotate: [0, -8, 8, -4, 0] }} transition={{ duration: 0.8, delay: 0.3 }}>
+                        {info.emoji}
+                      </motion.p>
+                      <p className={`title ${short ? "text-4xl" : "mt-2 text-6xl sm:text-7xl"} ${info.good ? "text-sunny" : "text-mint"}`}>⭐ {award.avg.toFixed(1)}</p>
+                    </div>
                     <p className="text-white/70">
                       average from {award.count} rating{award.count === 1 ? "" : "s"}
                     </p>
-                    <div className="mt-5 flex items-center gap-3">
-                      <Avatar name={award.name} color={award.color} size={56} ring />
-                      <p className="title text-3xl sm:text-4xl">sent by {award.name}</p>
+                    <div className={short ? "mt-2 flex items-center gap-3" : "contents"}>
+                      <div className={`flex items-center gap-3 ${short ? "" : "mt-5"}`}>
+                        <Avatar name={award.name} color={award.color} size={short ? 40 : 56} ring />
+                        <p className={`title ${short ? "text-2xl" : "text-3xl sm:text-4xl"}`}>sent by {award.name}</p>
+                      </div>
+                      {award.video && award.video.platform !== "upload" && (
+                        <a href={award.video.sourceUrl} target="_blank" rel="noreferrer" className={`btn btn-sky btn-sm ${short ? "" : "mt-5"}`}>
+                          Watch again ↗
+                        </a>
+                      )}
                     </div>
-                    {award.video && award.video.platform !== "upload" && (
-                      <a href={award.video.sourceUrl} target="_blank" rel="noreferrer" className="btn btn-sky btn-sm mt-5">
-                        Watch again ↗
-                      </a>
-                    )}
                   </>
                 ) : (
                   <>
-                    <Avatar name={award.name} color={award.color} size={120} ring />
-                    <p className={`title mt-4 max-w-[90vw] break-words ${info.good ? "text-sunny" : "text-mint"} drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] ${bigNameClass(award.name)}`}>
+                    <Avatar name={award.name} color={award.color} size={short ? 64 : 120} ring />
+                    <p className={`title max-w-[90vw] break-words ${short ? "mt-1" : "mt-4"} ${info.good ? "text-sunny" : "text-mint"} drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] ${bigNameClass(award.name, short)}`}>
                       {award.name}
                     </p>
-                    <p className="mt-3 font-display text-3xl">
+                    <p className={`font-display ${short ? "mt-1 text-2xl" : "mt-3 text-3xl"}`}>
                       ⭐ {award.avg.toFixed(1)} <span className="text-xl text-white/70">average rating</span>
                     </p>
                   </>
                 )}
-                <p className="mt-4 text-lg text-white/70">{info.blurb}</p>
+                <p className={`text-white/70 ${short ? "mt-1 text-base" : "mt-4 text-lg"}`}>{info.blurb}</p>
               </motion.div>
             ) : (
               <motion.div
@@ -216,13 +226,13 @@ export default function AwardsCeremony({
                 exit={{ y: -40, scale: 1.3, opacity: 0, transition: { duration: 0.25 } }}
                 transition={phase === "wobble" ? { duration: 0.8 } : { repeat: Infinity, duration: 0.25 }}
               >
-                <BoxMascot size={260} mood={phase === "drum" ? "chomp" : "idle"} open={phase === "drum"} />
+                <BoxMascot size={short ? 150 : 260} mood={phase === "drum" ? "chomp" : "idle"} open={phase === "drum"} />
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        <div className="mt-8 flex h-16 items-center">
+        <div className={`flex shrink-0 items-center ${short ? "mt-2 h-14" : "mt-8 h-16"}`}>
           {phase === "boom" && (
             <motion.button
               initial={{ opacity: 0, y: 10 }}

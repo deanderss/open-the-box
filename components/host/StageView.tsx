@@ -81,14 +81,14 @@ export default function StageView({
   // cares about changed. useCallback keeps the same function identity across renders where none of these
   // specific inputs changed.
   const renderOverlay = useCallback(
-    (visible: boolean) => (
+    (visible: boolean, show: () => void) => (
       <div className="text-white">
         <TimerBar remainingMs={s.remainingMs} fetchedAt={fetchedAt} totalSeconds={s.windowSeconds} active={s.state === "playing"} />
         {/* The timer bar and this small countdown stay up for the whole video — everything else here
             (the "locked in" count and the action buttons) fades out after a few seconds of no touches,
             and back in on a tap (see EmbedPlayer's `overlayVisible`), so there's less for screen
             mirroring/AirPlay to keep re-encoding while nobody's actually looking at the controls. */}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
+        <div className="relative flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
           <div className="flex items-center gap-3 drop-shadow">
             <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={40} />
             {visible && (
@@ -184,6 +184,21 @@ export default function StageView({
               <span aria-hidden>⤡</span> Exit
             </button>
           </div>
+          {/* While the controls are faded out: a TikTok/YouTube/Facebook player swallows every tap on the video
+              itself, so this is the one dependable way to bring them back. It acts on click (not on press), and
+              stops the press from reaching the stage, so the buttons only appear after the tap has finished and
+              the same tap can never land on one of them. */}
+          {!visible && (
+            <button
+              type="button"
+              className="absolute right-3 top-2 rounded-full bg-black/50 px-3 py-1 font-display text-xl leading-none text-white"
+              aria-label="Show controls"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={show}
+            >
+              ⋯
+            </button>
+          )}
         </div>
       </div>
     ),
@@ -220,6 +235,7 @@ export default function StageView({
           fullscreen={fullscreen}
           pinOverlay={answerOpen || moreOpen}
           overlay={renderOverlay}
+          silence={grandOpen && grandFor === s.index && s.state === "reveal"}
         />
         {s.state === "playing" && !fullscreen && (
           <div className="flex gap-2">

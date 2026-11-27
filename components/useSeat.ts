@@ -13,6 +13,7 @@ export const seatKey = (code: string) => `otb-seat-${code.toUpperCase()}`;
  *  a real player to re-pick their name (and hit "someone already joined as that name", since the server still
  *  has their old token) just because of a brief network/server blip. */
 const SEAT_INVALID_STATUSES = new Set([403, 404, 409]);
+const SEAT_RETRIES = 3;
 
 /**
  * Shared seat lifecycle for anyone joining a room as a player — a phone on /join, or the moderator playing
@@ -41,16 +42,39 @@ export function useSeat(code: string | null) {
       setChecked(true);
       return;
     }
+    let st: Seat | null = null;
+    try {
+      const v = JSON.parse(saved) as Seat;
+      if (v && typeof v.playerId === "string" && typeof v.token === "string") st = v;
+    } catch {
+      /* corrupt value — treated as no seat below */
+    }
+    if (!st) {
+      localStorage.removeItem(seatKey(code));
+      setSeat(null);
+      setChecked(true);
+      return;
+    }
+    const seatToCheck = st;
     (async () => {
-      const st = JSON.parse(saved) as Seat;
-      const r = await postJson<{ token: string }>("/api/session/join", { code, ...st });
-      if (cancelled) return;
-      if (r.ok) setSeat(st);
-      else if (r.status !== undefined && SEAT_INVALID_STATUSES.has(r.status)) {
-        localStorage.removeItem(seatKey(code));
-        setSeat(null);
+      // A phone that just woke up often has a flaky connection for a second or two. A failed check used to
+      // leave the player on the name picker with their own name shown as "(taken)" (the server still holds
+      // their seat). Retry a few times, then fall back to the saved seat: if it really is gone, the regular
+      // poll reports `viewerValid: false` and sends them back to the picker anyway.
+      for (let attempt = 0; attempt < SEAT_RETRIES; attempt++) {
+        const r = await postJson<{ token: string }>("/api/session/join", { code, ...seatToCheck });
+        if (cancelled) return;
+        if (r.ok) break;
+        if (r.status !== undefined && SEAT_INVALID_STATUSES.has(r.status)) {
+          localStorage.removeItem(seatKey(code));
+          setSeat(null);
+          setChecked(true);
+          return;
+        }
+        if (attempt < SEAT_RETRIES - 1) await new Promise((res) => setTimeout(res, 1500 * (attempt + 1)));
+        if (cancelled) return;
       }
-      // else: transient (rate limited / server hiccup) — leave the saved seat alone and try again next mount
+      setSeat(seatToCheck);
       setChecked(true);
     })();
     return () => {

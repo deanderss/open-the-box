@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { fireConfetti } from "@/lib/confetti";
 import Avatar from "./Avatar";
+import { useShortScreen } from "./useShortScreen";
 import { useSmoothTv } from "@/lib/smoothTv";
 import { isMuted, playDrumroll, playFanfare, setMuted, stopSfx } from "@/lib/sfx";
 import { REVEAL_STEPS as STEPS, revealDelayFor as delayFor, REVEAL_SUSPENSE_MS as REEL_MS } from "@/lib/revealTiming";
@@ -12,12 +13,14 @@ type P = { id: string; name: string; color: string };
 const BOOM_MS = 2742; // how long the winner screen stays up before the results panel
 
 /** The reel and the winner card both show one name at a huge size — long ones need to shrink to still fit on one line. */
-function reelNameClass(name: string) {
+function reelNameClass(name: string, short = false) {
+  if (short) return name.length <= 10 ? "text-3xl" : name.length <= 16 ? "text-2xl" : "text-xl";
   if (name.length <= 10) return "text-4xl sm:text-5xl";
   if (name.length <= 16) return "text-3xl sm:text-4xl";
   return "text-2xl sm:text-3xl";
 }
-function bigNameClass(name: string) {
+function bigNameClass(name: string, short = false) {
+  if (short) return name.length <= 9 ? "text-6xl" : name.length <= 13 ? "text-5xl" : "text-4xl";
   if (name.length <= 6) return "text-7xl sm:text-9xl";
   if (name.length <= 9) return "text-6xl sm:text-8xl";
   if (name.length <= 13) return "text-5xl sm:text-7xl";
@@ -40,6 +43,8 @@ export default function GrandReveal({
   useEffect(() => setMutedState(isMuted()), []);
   // Smooth TV mode: a still spotlight, since a spinning full-screen gradient changes every pixel every frame.
   const [smoothTv] = useSmoothTv();
+  // A phone turned sideways: smaller reel and winner so nothing runs off the screen.
+  const short = useShortScreen();
 
   // The parent re-renders on every poll, so keep the latest callback in a ref and freeze the reel at mount.
   const doneRef = useRef(onDone);
@@ -133,14 +138,16 @@ export default function GrandReveal({
         <AnimatePresence mode="wait">
           {phase === "reel" && (
             <motion.div key="reel" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.1 }} className="flex flex-col items-center">
-              <p className="title text-4xl text-white/80 sm:text-5xl">And this video was sent by…</p>
-              <div className="relative mt-8 flex h-[19rem] w-[19rem] items-center justify-center rounded-[2.5rem] border-8 border-night bg-black/40 shadow-chunky sm:h-[22rem] sm:w-[22rem]">
-                <motion.div key={step} initial={{ y: -40, opacity: 0.2, scale: 0.9 }} animate={{ y: 0, opacity: 1, scale: 1 }} transition={{ duration: 0.09 }} className="flex flex-col items-center gap-4">
-                  <Avatar name={current.name} color={current.color} size={150} />
-                  <p className={`title max-w-[85%] break-words text-center ${reelNameClass(current.name)}`}>{current.name}</p>
+              <p className={`title text-white/80 ${short ? "text-2xl" : "text-4xl sm:text-5xl"}`}>And this video was sent by…</p>
+              <div
+                className={`relative flex items-center justify-center rounded-[2.5rem] border-8 border-night bg-black/40 shadow-chunky ${short ? "mt-3 h-[13rem] w-[13rem]" : "mt-8 h-[19rem] w-[19rem] sm:h-[22rem] sm:w-[22rem]"}`}
+              >
+                <motion.div key={step} initial={{ y: -40, opacity: 0.2, scale: 0.9 }} animate={{ y: 0, opacity: 1, scale: 1 }} transition={{ duration: 0.09 }} className={`flex flex-col items-center ${short ? "gap-2" : "gap-4"}`}>
+                  <Avatar name={current.name} color={current.color} size={short ? 96 : 150} />
+                  <p className={`title max-w-[85%] break-words text-center ${reelNameClass(current.name, short)}`}>{current.name}</p>
                 </motion.div>
               </div>
-              <motion.p animate={{ opacity: [1, 0.4, 1] }} transition={{ repeat: Infinity, duration: 0.6 }} className="mt-6 font-display text-2xl text-sunny">
+              <motion.p animate={{ opacity: [1, 0.4, 1] }} transition={{ repeat: Infinity, duration: 0.6 }} className={`font-display text-2xl text-sunny ${short ? "mt-2" : "mt-6"}`}>
                 🥁 🥁 🥁
               </motion.p>
             </motion.div>
@@ -149,22 +156,22 @@ export default function GrandReveal({
           {phase === "boom" && (
             <motion.div key="boom" className="flex flex-col items-center">
               <motion.div className="pointer-events-none fixed inset-0 bg-white" initial={{ opacity: 0.5 }} animate={{ opacity: 0 }} transition={{ duration: 0.7 }} />
-              <motion.p initial={{ y: -30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }} className="font-display text-3xl uppercase tracking-[0.4em] text-white/80">
+              <motion.p initial={{ y: -30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }} className={`font-display uppercase tracking-[0.4em] text-white/80 ${short ? "text-xl" : "text-3xl"}`}>
                 Sent by
               </motion.p>
-              <motion.div initial={{ scale: 0, rotate: -25 }} animate={{ scale: [0, 1.35, 1], rotate: [-25, 8, 0] }} transition={{ duration: 0.7, ease: "easeOut" }} className="mt-6">
-                <Avatar name={winner.name} color={winner.color} size={230} ring />
+              <motion.div initial={{ scale: 0, rotate: -25 }} animate={{ scale: [0, 1.35, 1], rotate: [-25, 8, 0] }} transition={{ duration: 0.7, ease: "easeOut" }} className={short ? "mt-2" : "mt-6"}>
+                <Avatar name={winner.name} color={winner.color} size={short ? 120 : 230} ring />
               </motion.div>
               <motion.p
                 initial={{ scale: 0.3, opacity: 0 }}
                 animate={{ scale: [0.3, 1.2, 1], opacity: 1 }}
                 transition={{ delay: 0.35, duration: 0.6 }}
-                className={`title mt-6 max-w-[92vw] break-words text-center text-sunny drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] ${bigNameClass(winner.name)}`}
+                className={`title max-w-[92vw] break-words text-center text-sunny drop-shadow-[0_6px_0_rgba(0,0,0,0.5)] ${short ? "mt-2" : "mt-6"} ${bigNameClass(winner.name, short)}`}
               >
                 {winner.name}!
               </motion.p>
               {rating != null && (
-                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8 }} className="mt-6 rounded-full bg-black/40 px-6 py-2 font-display text-3xl">
+                <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.8 }} className={`rounded-full bg-black/40 px-6 py-2 font-display ${short ? "mt-2 text-2xl" : "mt-6 text-3xl"}`}>
                   ⭐ {Number(rating).toFixed(1)} <span className="text-xl text-white/70">/ 10</span>
                 </motion.div>
               )}

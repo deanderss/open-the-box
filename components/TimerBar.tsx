@@ -28,7 +28,7 @@ export default function TimerBar({
     const colorFor = (ms: number) => (ms <= 15000 ? "#FF5E5E" : ms <= 45000 ? "#FFD23F" : "#3DDC97");
 
     if (!active || remainingMs == null || totalSeconds <= 0) {
-      bar.style.transition = "none";
+      bar.style.setProperty("transition", "none", "important");
       bar.style.transform = "scaleX(0)";
       setColor(colorFor(0));
       return;
@@ -41,10 +41,12 @@ export default function TimerBar({
     // Jump to the current fraction with no transition, force the browser to commit it, then switch the
     // transition back on and set the target: one linear animation all the way to empty over however long is
     // actually left, instead of a new style every 250ms.
-    bar.style.transition = "none";
+    bar.style.setProperty("transition", "none", "important");
     bar.style.transform = `scaleX(${frac})`;
     void bar.offsetWidth; // flush the "none" transition before re-enabling it below
-    bar.style.transition = `transform ${msLeft}ms linear`;
+    // `important` so the global Reduce Motion rule (globals.css) can't shrink this to 0.01ms: the bar is the
+    // game's clock, not decoration, and with that rule it emptied instantly the moment each video started.
+    bar.style.setProperty("transition", `transform ${msLeft}ms linear`, "important");
     bar.style.transform = "scaleX(0)";
 
     const timers: ReturnType<typeof setTimeout>[] = [];

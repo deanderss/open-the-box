@@ -3,6 +3,19 @@
 
 type AC = typeof AudioContext;
 let ctx: AudioContext | null = null;
+// Every effect plays through this one gain node instead of straight to the speakers. Stopping the sounds
+// (a skipped reveal, "Next award" mid-trombone, mute) unplugs it and starts a fresh one, which silences
+// every note already queued. Suspending the whole context used to only pause them: the next tap resumed it
+// and the old drumroll played over the next video.
+let bus: GainNode | null = null;
+
+function out(c: AudioContext): AudioNode {
+  if (!bus) {
+    bus = c.createGain();
+    bus.connect(c.destination);
+  }
+  return bus;
+}
 const timers: ReturnType<typeof setTimeout>[] = [];
 
 const KEY = "otb-muted";
@@ -28,7 +41,8 @@ function audio(): AudioContext | null {
     const Ctor: AC | undefined = window.AudioContext || (window as unknown as { webkitAudioContext?: AC }).webkitAudioContext;
     if (!Ctor) return null;
     ctx = ctx || new Ctor();
-    if (ctx.state === "suspended") void ctx.resume();
+    // "interrupted" is iOS-only (a call, or coming back from the Instagram app); treat it like "suspended".
+    if (ctx.state !== "running" && ctx.state !== "closed") void ctx.resume().catch(() => {});
     return ctx;
   } catch {
     return null;
@@ -43,6 +57,13 @@ function audio(): AudioContext | null {
  * already running well before the reveal needs it.
  */
 export function unlockAudio() {
+  // Safari 17+: play reveal sounds even when the iPhone's ringer switch is on silent, like the videos do.
+  try {
+    const nav = navigator as Navigator & { audioSession?: { type: string } };
+    if (nav.audioSession && nav.audioSession.type !== "playback") nav.audioSession.type = "playback";
+  } catch {
+    /* not supported */
+  }
   audio();
 }
 
@@ -54,7 +75,7 @@ function thump(c: AudioContext, when: number, gain: number) {
   o.frequency.exponentialRampToValueAtTime(48, when + 0.12);
   g.gain.setValueAtTime(gain, when);
   g.gain.exponentialRampToValueAtTime(0.001, when + 0.16);
-  o.connect(g).connect(c.destination);
+  o.connect(g).connect(out(c));
   o.start(when);
   o.stop(when + 0.18);
 }
@@ -82,7 +103,7 @@ function note(c: AudioContext, freq: number, when: number, dur: number, gain = 0
   g.gain.setValueAtTime(0.0001, when);
   g.gain.exponentialRampToValueAtTime(gain, when + 0.02);
   g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-  o.connect(g).connect(c.destination);
+  o.connect(g).connect(out(c));
   o.start(when);
   o.stop(when + dur + 0.05);
 }
@@ -104,7 +125,7 @@ export function playFanfare() {
   hp.frequency.value = 3000;
   g.gain.value = 0.35;
   src.buffer = buf;
-  src.connect(hp).connect(g).connect(c.destination);
+  src.connect(hp).connect(g).connect(out(c));
   src.start(t0);
   // fanfare: C5 E5 G5 then a held C major chord
   [523.25, 659.25, 783.99].forEach((f, i) => note(c, f, t0 + i * 0.11, 0.18));
@@ -132,7 +153,7 @@ export function playSadTrombone() {
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
   g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-  o.connect(g).connect(c.destination);
+  o.connect(g).connect(out(c));
   o.start(t);
   lfo.start(t);
   o.stop(t + 1.25);
@@ -141,8 +162,15 @@ export function playSadTrombone() {
 
 export function stopSfx() {
   timers.splice(0).forEach(clearTimeout);
-  // Suspend, don't close: closing destroys the context permanently, so the very next reveal would need a
-  // brand new one created outside of any tap's gesture — right back to the iOS silence problem `unlockAudio`
-  // exists to avoid. Suspending just pauses it; `audio()` resumes the same (already-unlocked) context.
-  if (ctx) void ctx.suspend().catch(() => {});
+  // Unplug the bus (silencing everything queued on it) rather than suspending or closing the context: a
+  // closed context is gone for good, and resuming a suspended one outside a tap can fail on iOS. The context
+  // itself stays running and unlocked for the next reveal.
+  if (bus) {
+    try {
+      bus.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    bus = null;
+  }
 }

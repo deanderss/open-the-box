@@ -49,10 +49,10 @@ export default function RevealPanel({ state, instant = false }: { state: GameSta
                 ⭐ {avg != null ? avg.toFixed(1) : "–"} <span className="text-base text-white/70">/ 10 · {state.video?.ratingCount ?? 0} ratings</span>
               </div>
             </div>
-            {/* Below lg: a short scrolling list (it's a phone/tablet, so vertical space is tight). From lg up
-                (a TV screen being watched from across the room) it unfolds into two columns with no cap, so
-                nobody ever needs to scroll to see every guess. */}
-            <ul className="mt-4 max-h-56 space-y-1 overflow-y-auto lg:max-h-none lg:grid lg:grid-cols-2 lg:gap-x-4 lg:gap-y-1 lg:space-y-0 lg:overflow-visible">
+            {/* A phone held upright: a short scrolling list. From sm up (a sideways phone mirrored to the TV, a
+                tablet) it unfolds into two columns capped by the screen's height, and from lg up there's no
+                cap at all, so the room sees every guess without anyone scrolling. */}
+            <ul className="mt-4 max-h-56 space-y-1 overflow-y-auto sm:grid sm:max-h-[60vh] sm:grid-cols-2 sm:gap-x-4 sm:gap-y-1 sm:space-y-0 lg:max-h-none lg:overflow-visible">
               {r.guesses.map((g, i) => (
                 <motion.li
                   key={g.playerId}

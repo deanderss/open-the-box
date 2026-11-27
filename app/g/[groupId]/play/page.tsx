@@ -57,7 +57,9 @@ function HostInner({ groupId }: { groupId: string }) {
   // spots across lobby/stage/fullscreen) so switching between those spots never re-runs the seat's own
   // join-verification request or drops a half-made rating/guess.
   const seatApi = useSeat(s?.code ?? null);
-  useWakeLock(!!s && s.state !== "finished");
+  // Stays on through the awards ceremony too: if the host phone auto-locks between awards, the TV mirroring
+  // drops. Released when the moderator leaves the page.
+  useWakeLock(!!s);
 
   // Instant "Next": the upcoming video is already sitting preloaded in a hidden slot (see EmbedPlayer), so
   // there's no technical reason the moderator has to watch a full action request *and then* a poll finish
@@ -96,9 +98,12 @@ function HostInner({ groupId }: { groupId: string }) {
 
   // Fullscreen while a video is playing; back to the window view at the reveal (or when paused).
   const fullscreen = !!(vs && vs.state === "playing" && !vs.paused && view?.video && wantFull);
+  // Bumped when a Start/Next/Resume that already entered browser fullscreen fails: re-runs the check below
+  // against the refreshed state, so a failed Start doesn't leave the lobby stuck in browser fullscreen.
+  const [fsCheck, setFsCheck] = useState(0);
   useEffect(() => {
     if (!fullscreen) exitNativeFullscreen();
-  }, [fullscreen, vs?.state, vs?.paused]);
+  }, [fullscreen, vs?.state, vs?.paused, fsCheck]);
   // Each new video starts fullscreen again
   useEffect(() => {
     setWantFull(true);
@@ -150,7 +155,8 @@ function HostInner({ groupId }: { groupId: string }) {
     unlockAudio();
     // Starting a video is the moderator's "play": go fullscreen right inside this click
     // (browsers only allow it during a user gesture, so it has to happen before any await).
-    if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) {
+    const goesFull = action === "begin" || action === "next" || (action === "resume" && s?.state === "playing");
+    if (goesFull) {
       // The Next button sits below the video, so the page may be scrolled. Bring it back to the top first: on phones a
       // scrolled page behind the full-screen stage makes taps inside the video land in the wrong place.
       scrollToTop();
@@ -176,6 +182,7 @@ function HostInner({ groupId }: { groupId: string }) {
         setActionErr(d.error || "Something went wrong");
         if (action === "next") setPendingNext(null); // guess was wrong (or the request failed) — fall back to what's real
         await refresh();
+        if (goesFull) setFsCheck((n) => n + 1);
         return false;
       }
       // The action route already computed and returned the resulting state server-side — apply it directly
@@ -187,6 +194,7 @@ function HostInner({ groupId }: { groupId: string }) {
       setActionErr("Couldn't reach the server — check your connection and try again");
       if (action === "next") setPendingNext(null);
       await refresh();
+      if (goesFull) setFsCheck((n) => n + 1);
       return false;
     } finally {
       setBusy(false);
