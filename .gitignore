@@ -10,3 +10,5 @@ supabase/.temp
 deploy.err
 vercel-env.err
 vercel-phase.log
+
+*.tsbuildinfo
