@@ -383,11 +383,16 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   // response nulls `video`/`upNext` out anyway, so there is nothing to look up a live playability check for.
   const relevantIds = Array.from(new Set([...sIn.video_order.slice(0, Math.max(0, sIn.current_index + 1)), ...(needsNext ? [sIn.video_order[nextIdx]] : [])]));
 
+  // Only the *current* video's responses are needed here (for "how many have answered" and the reveal's
+  // guess list) — the full-history sum used to live in this same query, but that's now a tiny server-side
+  // aggregate (`session_correct_counts`, kicked off below) instead of a row-per-answer-ever payload.
   const [groupRes, rosterRes, spRes, respRes, vidsRes] = await Promise.all([
     db().from("groups").select("id,name,color,emoji").eq("id", sIn.group_id).single(),
     db().from("players").select("id,display_name,avatar_color").eq("group_id", sIn.group_id).eq("active", true).order("display_name"),
     db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", sIn.id).order("joined_at"),
-    db().from("responses").select("player_id,video_id,rating,guessed_player_id,is_correct,is_decoy").eq("session_id", sIn.id),
+    vid
+      ? db().from("responses").select("player_id,video_id,rating,guessed_player_id,is_correct,is_decoy").eq("session_id", sIn.id).eq("video_id", vid)
+      : Promise.resolve({ data: [], error: null }),
     relevantIds.length
       ? db()
           .from("videos")
@@ -413,6 +418,14 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     const answeredNow = (resps || []).filter((r) => r.video_id === vid && joinedIds.has(r.player_id as string)).length;
     if (elapsed >= windowSeconds || (joinedIds.size > 0 && answeredNow >= joinedIds.size)) s = await doReveal(sIn);
   }
+
+  // Kicked off now so it overlaps with the roster/media work below instead of adding its own round trip —
+  // only actually awaited down at the scoreMap construction, right where its result is used. Excludes the
+  // in-progress video's answers while still `playing` so a ticking-up scoreboard can't leak the sender early.
+  const scorePromise = db().rpc("session_correct_counts", {
+    p_session_id: sIn.id,
+    p_exclude_video_id: s.state === "playing" ? vid : null,
+  });
 
   const rosterMap = new Map((roster || []).map((p) => [p.id as string, p]));
   const nameOf = (id?: string | null) => (id ? (rosterMap.get(id)?.display_name as string) ?? "Someone" : null);
@@ -462,14 +475,15 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   }
 
   // Session scoreboard: correct guesses (decoys excluded) plus half a point to whoever sent each video that has
-  // been revealed, so the person who filled the box still has a shot at winning.
+  // been revealed, so the person who filled the box still has a shot at winning. The per-player correct count
+  // comes from the aggregate kicked off above instead of summing every response row for the session in JS.
+  const scoreRes = await scorePromise;
+  if (scoreRes.error) throw new HttpError(503, DB_DOWN);
+  const correctCounts = new Map<string, number>(
+    ((scoreRes.data as { player_id: string; correct_count: number }[] | null) ?? []).map((r) => [r.player_id, Number(r.correct_count)])
+  );
   const scoreMap = new Map<string, number>();
-  (sp || []).forEach((r) => scoreMap.set(r.player_id as string, 0));
-  (resps || []).forEach((r) => {
-    if (r.is_correct && !r.is_decoy && !(s.state === "playing" && r.video_id === vid)) {
-      scoreMap.set(r.player_id as string, (scoreMap.get(r.player_id as string) || 0) + 1);
-    }
-  });
+  (sp || []).forEach((r) => scoreMap.set(r.player_id as string, correctCounts.get(r.player_id as string) || 0));
   const bonusMap = new Map<string, number>();
   if (s.state !== "lobby" && s.current_index >= 0) {
     const revealedUpTo = s.state === "playing" ? s.current_index : s.current_index + 1; // exclusive
