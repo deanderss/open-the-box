@@ -6,6 +6,7 @@ import LiveCountdown from "@/components/LiveCountdown";
 import TimerBar from "@/components/TimerBar";
 import EmbedPlayer from "@/components/EmbedPlayer";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
+import type { useSeat } from "@/components/useSeat";
 import type { GameState } from "@/components/useGameState";
 import { enterNativeFullscreen } from "@/lib/fullscreen";
 import RevealPanel from "./RevealPanel";
@@ -22,6 +23,7 @@ export default function StageView({
   grandOpen,
   grandFor,
   finishPending,
+  seatApi,
   act,
   onPauseExit,
   finishGame,
@@ -36,6 +38,7 @@ export default function StageView({
   grandOpen: boolean;
   grandFor: number | null;
   finishPending: boolean;
+  seatApi: ReturnType<typeof useSeat>;
   act: (action: string, extra?: Record<string, string>) => void;
   onPauseExit: () => void;
   finishGame: () => void;
@@ -231,79 +234,86 @@ export default function StageView({
             <button className="mb-2 ml-auto block text-sm text-white/70 underline" onClick={() => setAnswerOpen(false)}>
               Close
             </button>
-            <HostPlayerPanel state={state} onStatus={handleAnswerStatus} />
+            <HostPlayerPanel state={state} seatApi={seatApi} onStatus={handleAnswerStatus} />
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-4">
-        {s.state === "playing" ? (
-          // card-flat, not card: no backdrop-blur while a video is actually playing — one less thing behind
-          // this panel that has to be re-blurred every frame for screen mirroring/AirPlay to re-encode.
-          <div className="card-flat flex flex-col items-center gap-4">
-            <p className="title text-2xl">Rate it &amp; guess who sent it!</p>
-            <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={150} />
-            <p className="font-display text-3xl">
-              <span className="text-mint">{state.answered}</span>
-              <span className="text-white/70"> / {state.eligible} locked in</span>
-            </p>
-            <div className="flex flex-wrap justify-center gap-3">
-              {state.players.map((p) => (
-                <motion.div key={p.id} animate={p.answered ? { scale: [1, 1.25, 1] } : {}} className="flex flex-col items-center">
-                  <Avatar name={p.name} color={p.color} size={48} dim={!p.answered} ring={p.answered} />
-                  <span className="mt-1 text-xs">{p.name}</span>
-                </motion.div>
-              ))}
+      {/* Entirely covered by the fullscreen video (`fixed inset-0 z-50` in EmbedPlayer) the moment it's up —
+          `fullscreen` is only ever true during "playing" anyway, so nothing here is reachable UI at that
+          point (the overlay + the fullscreen Answer sheet already duplicate the one or two things that
+          matter). Unmounted instead of just visually hidden so none of its own polling-driven re-renders or
+          animations (MiniScores, the avatar "pop" on answering) keep running behind the video for nothing. */}
+      {!fullscreen && (
+        <div className="flex flex-col gap-4">
+          {s.state === "playing" ? (
+            // card-flat, not card: no backdrop-blur while a video is actually playing — one less thing behind
+            // this panel that has to be re-blurred every frame for screen mirroring/AirPlay to re-encode.
+            <div className="card-flat flex flex-col items-center gap-4">
+              <p className="title text-2xl">Rate it &amp; guess who sent it!</p>
+              <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={150} />
+              <p className="font-display text-3xl">
+                <span className="text-mint">{state.answered}</span>
+                <span className="text-white/70"> / {state.eligible} locked in</span>
+              </p>
+              <div className="flex flex-wrap justify-center gap-3">
+                {state.players.map((p) => (
+                  <motion.div key={p.id} animate={p.answered ? { scale: [1, 1.25, 1] } : {}} className="flex flex-col items-center">
+                    <Avatar name={p.name} color={p.color} size={48} dim={!p.answered} ring={p.answered} />
+                    <span className="mt-1 text-xs">{p.name}</span>
+                  </motion.div>
+                ))}
+              </div>
             </div>
-          </div>
-        ) : grandOpen && grandFor === s.index ? (
-          <div className="card py-10 text-center">
-            <p className="text-6xl">🥁</p>
-          </div>
-        ) : (
-          <RevealPanel state={state} instant={grandFor === s.index} />
-        )}
-        {/* Action buttons: inline in the flow from lg up (there's room beside the video); below that, a
-            sticky bar pinned to the bottom of the screen so they're always one tap away without scrolling
-            past scores or the guess list. */}
-        {s.state === "playing" && (
-          // No backdrop-blur here either, same reason as card-flat above — this bar sits over the video for
-          // the whole clip.
-          <div
-            className="sticky bottom-0 z-20 -mx-6 flex gap-2 bg-night/95 px-6 py-3 lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0"
-            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
-          >
-            <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>
-              Reveal now
-            </button>
-            <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={handleSkip}>
-              Skip ⏭
-            </button>
-          </div>
-        )}
-        {s.state === "reveal" && (
-          <div
-            className="sticky bottom-0 z-20 -mx-6 flex flex-col gap-2 bg-night/95 px-6 py-3 backdrop-blur lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0 lg:backdrop-blur-0"
-            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
-          >
-            {finishPending && <p className="text-center text-sm text-white/70">Wrapping up after this video. Hit Finished when you&apos;re ready.</p>}
-            {s.index + 1 < s.total && (
-              <button className={`btn w-full text-2xl ${finishPending ? "btn-ghost" : "btn-yellow"}`} disabled={busy} onClick={() => act("next")}>
-                Next video ▶
-              </button>
-            )}
-            <button
-              className={`btn w-full ${finishPending || s.index + 1 >= s.total ? "btn-yellow text-2xl" : "btn-mint"}`}
-              disabled={busy}
-              title="Wrap up on this video. The remaining videos stay in the box for next time."
-              onClick={finishGame}
+          ) : grandOpen && grandFor === s.index ? (
+            <div className="card py-10 text-center">
+              <p className="text-6xl">🥁</p>
+            </div>
+          ) : (
+            <RevealPanel state={state} instant={grandFor === s.index} />
+          )}
+          {/* Action buttons: inline in the flow from lg up (there's room beside the video); below that, a
+              sticky bar pinned to the bottom of the screen so they're always one tap away without scrolling
+              past scores or the guess list. */}
+          {s.state === "playing" && (
+            // No backdrop-blur here either, same reason as card-flat above — this bar sits over the video for
+            // the whole clip.
+            <div
+              className="sticky bottom-0 z-20 -mx-6 flex gap-2 bg-night/95 px-6 py-3 lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0"
+              style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
             >
-              {s.index + 1 >= s.total ? "🏁 Finish" : "✅ Finished"}
-            </button>
-          </div>
-        )}
-        {!fullscreen && <HostPlayerPanel state={state} onStatus={handleAnswerStatus} />}
-        <MiniScores scores={state.scores} />
-      </div>
+              <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>
+                Reveal now
+              </button>
+              <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={handleSkip}>
+                Skip ⏭
+              </button>
+            </div>
+          )}
+          {s.state === "reveal" && (
+            <div
+              className="sticky bottom-0 z-20 -mx-6 flex flex-col gap-2 bg-night/95 px-6 py-3 backdrop-blur lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0 lg:backdrop-blur-0"
+              style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+            >
+              {finishPending && <p className="text-center text-sm text-white/70">Wrapping up after this video. Hit Finished when you&apos;re ready.</p>}
+              {s.index + 1 < s.total && (
+                <button className={`btn w-full text-2xl ${finishPending ? "btn-ghost" : "btn-yellow"}`} disabled={busy} onClick={() => act("next")}>
+                  Next video ▶
+                </button>
+              )}
+              <button
+                className={`btn w-full ${finishPending || s.index + 1 >= s.total ? "btn-yellow text-2xl" : "btn-mint"}`}
+                disabled={busy}
+                title="Wrap up on this video. The remaining videos stay in the box for next time."
+                onClick={finishGame}
+              >
+                {s.index + 1 >= s.total ? "🏁 Finish" : "✅ Finished"}
+              </button>
+            </div>
+          )}
+          <HostPlayerPanel state={state} seatApi={seatApi} onStatus={handleAnswerStatus} />
+          <MiniScores scores={state.scores} />
+        </div>
+      )}
     </section>
   );
 }

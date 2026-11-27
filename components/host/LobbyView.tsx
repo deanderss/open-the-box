@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
 import Avatar from "@/components/Avatar";
 import HostPlayerPanel from "@/components/HostPlayerPanel";
+import type { useSeat } from "@/components/useSeat";
 import type { GameState } from "@/components/useGameState";
 
 // Only the lobby ever needs a QR code, so it's loaded on first use instead of sitting in the main bundle.
@@ -15,12 +16,14 @@ export default function LobbyView({
   state,
   joinUrl,
   busy,
+  seatApi,
   onBegin,
   onKick,
 }: {
   state: GameState;
   joinUrl: string;
   busy: boolean;
+  seatApi: ReturnType<typeof useSeat>;
   onBegin: () => void;
   onKick: (playerId: string, name: string) => void;
 }) {
@@ -69,7 +72,7 @@ export default function LobbyView({
             ▶ Start the show
           </button>
         </div>
-        <HostPlayerPanel state={state} />
+        <HostPlayerPanel state={state} seatApi={seatApi} />
       </div>
     </section>
   );

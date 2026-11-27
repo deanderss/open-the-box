@@ -40,10 +40,12 @@ export function supabaseAdmin() {
   return _admin;
 }
 
-/** Returns the logged-in moderator's user id, or null. */
+/** Returns the logged-in moderator's user id, or null. Every API call behind `requireUser()`/`requireGroupMod()`
+ *  goes through this — getClaims() checks the JWT's signature locally (cached JWKS) instead of getUser()'s
+ *  round trip to the Auth server, so it doesn't add that latency to every single request. */
 export async function currentUserId(): Promise<string | null> {
-  const { data } = await supabaseServer().auth.getUser();
-  return data.user?.id ?? null;
+  const { data } = await supabaseServer().auth.getClaims();
+  return (data?.claims.sub as string | undefined) ?? null;
 }
 
 export async function isGroupMod(userId: string, groupId: string) {

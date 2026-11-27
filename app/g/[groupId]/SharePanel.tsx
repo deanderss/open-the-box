@@ -1,6 +1,13 @@
 "use client";
 import { useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import dynamic from "next/dynamic";
+
+// Most visits to this page never click "QR code" — loaded on first use instead of sitting in this page's
+// initial bundle (same pattern as the lobby's own QR code in components/host/LobbyView.tsx).
+const QRCodeSVG = dynamic(() => import("qrcode.react").then((m) => m.QRCodeSVG), {
+  ssr: false,
+  loading: () => <div className="h-[180px] w-[180px] animate-pulse rounded-xl bg-black/10" />,
+});
 
 export default function SharePanel({ groupId, origin, token }: { groupId: string; origin: string; token: string }) {
   const [tok, setTok] = useState(token);

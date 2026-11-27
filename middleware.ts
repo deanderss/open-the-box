@@ -17,15 +17,19 @@ export async function middleware(req: NextRequest) {
       },
     },
   });
-  const { data } = await supabase.auth.getUser();
+  // getClaims() checks the JWT's signature locally (cached JWKS) instead of getUser()'s round trip to the
+  // Auth server — middleware runs on every single matched request, so that round trip was effectively a tax
+  // on every protected page load and every redirect decision.
+  const { data } = await supabase.auth.getClaims();
+  const uid = data?.claims.sub as string | undefined;
   const path = req.nextUrl.pathname;
-  if (!data.user && PROTECTED.some((r) => r.test(path))) {
+  if (!uid && PROTECTED.some((r) => r.test(path))) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.search = `?next=${encodeURIComponent(path)}`;
     return NextResponse.redirect(url);
   }
-  if (data.user && (path === "/login" || path === "/")) {
+  if (uid && (path === "/login" || path === "/")) {
     const url = req.nextUrl.clone();
     url.pathname = "/groups";
     url.search = "";

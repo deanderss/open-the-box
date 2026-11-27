@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Avatar from "./Avatar";
-import { useSeat } from "./useSeat";
+import type { useSeat } from "./useSeat";
 import type { GameState } from "./useGameState";
 
 /**
@@ -9,11 +9,21 @@ import type { GameState } from "./useGameState";
  * rate and guess like anyone else. The screen is shared, so picking a rating or a name must look exactly the same
  * whether or not anything is selected; only the Lock in button's enabled state shows that choices have been made.
  *
- * Hidden whenever the video is full screen (the caller only renders this when `!fullscreen`).
+ * This can be on screen in up to three different spots depending on game state and fullscreen (the lobby, the
+ * right-hand column, the fullscreen "Answer" sheet) — `seat` is passed in from a single `useSeat()` call made
+ * once for the whole host page, rather than each spot calling it itself, so switching between them never
+ * re-runs the seat's own join-verification request or (if the moderator is mid-pick) drops it.
  */
-export default function HostPlayerPanel({ state, onStatus }: { state: GameState; onStatus?: (status: { visible: boolean; answered: boolean }) => void }) {
-  const code = state.session.code;
-  const { seat, checked, pick, clear, submitAnswer } = useSeat(code);
+export default function HostPlayerPanel({
+  state,
+  seatApi,
+  onStatus,
+}: {
+  state: GameState;
+  seatApi: ReturnType<typeof useSeat>;
+  onStatus?: (status: { visible: boolean; answered: boolean }) => void;
+}) {
+  const { seat, checked, pick, clear, submitAnswer } = seatApi;
   const [err, setErr] = useState<string | null>(null);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);

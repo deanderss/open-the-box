@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useGameState, type GameState } from "@/components/useGameState";
+import { useSeat } from "@/components/useSeat";
 import { useWakeLock } from "@/components/useWakeLock";
 import { enterNativeFullscreen, exitNativeFullscreen, scrollToTop } from "@/lib/fullscreen";
 import { unlockAudio } from "@/lib/sfx";
@@ -30,6 +31,10 @@ function HostInner({ groupId }: { groupId: string }) {
   useEffect(() => setOrigin(window.location.origin), []);
 
   const s = state?.session;
+  // Called once for the whole host page (not inside HostPlayerPanel, which renders in up to three different
+  // spots across lobby/stage/fullscreen) so switching between those spots never re-runs the seat's own
+  // join-verification request or drops a half-made rating/guess.
+  const seatApi = useSeat(s?.code ?? null);
   useWakeLock(!!s && s.state !== "finished");
 
   // Instant "Next": the upcoming video is already sitting preloaded in a hidden slot (see EmbedPlayer), so
@@ -219,7 +224,7 @@ function HostInner({ groupId }: { groupId: string }) {
       <HostHeader groupId={groupId} state={gs} origin={origin} busy={busy} reconnecting={reconnecting} onPauseExit={pauseAndExit} onEnd={endGame} onFinish={finishGame} />
       {actionErr && <p className="mx-6 rounded-xl bg-[#FF5E5E]/20 p-2 text-center text-[#FFB3B3]">{actionErr}</p>}
 
-      {gvs.state === "lobby" && <LobbyView state={gs} joinUrl={joinUrl} busy={busy} onBegin={() => act("begin")} onKick={kick} />}
+      {gvs.state === "lobby" && <LobbyView state={gs} joinUrl={joinUrl} busy={busy} seatApi={seatApi} onBegin={() => act("begin")} onKick={kick} />}
 
       {gvs.paused && gvs.state !== "finished" && <PausedView groupId={groupId} index={gvs.index} total={gvs.total} busy={busy} onResume={() => act("resume")} />}
 
@@ -235,6 +240,7 @@ function HostInner({ groupId }: { groupId: string }) {
           grandOpen={grandOpen}
           grandFor={grandFor}
           finishPending={finishPending}
+          seatApi={seatApi}
           act={act}
           onPauseExit={pauseAndExit}
           finishGame={finishGame}
