@@ -1,6 +1,6 @@
 # Open the Box: Project Context for AI Assistants
 
-Give this file to any AI that will maintain or extend the app. Read it first, then `ALL-SOURCE.md` (every file in full) and `DEPLOY.md` (hosting setup).
+Give this file to any AI that will maintain or extend the app. Read it first, then the source and `DEPLOY.md` (hosting setup). Section 13 is the newest and corrects a few earlier details.
 
 ---
 
@@ -446,3 +446,46 @@ Three phases, each type-checked and build-verified, shipped as separate commits 
   - **Not yet confirmed — needs a real iPhone + Apple TV, can't be tested from here:** whether the AirPlay session survives a `src` swap on the same `<video>` element when the game moves on to the next native clip (if it doesn't, AirPlay is still one tap away per clip on the button, which works the same either way); and whether iOS returns to screen mirroring on its own once an AirPlay video session ends or disconnects, for a host who had mirroring turned on before the clip started.
 - **Host tips that aren't about the app at all:** put the Apple TV on Ethernet or 5GHz Wi-Fi rather than 2.4GHz; turn off Low Power Mode on the phone (it throttles a lot, mirroring included); close other apps running in the background on the phone; keep the phone plugged in and not buried in a pocket/case during a long game — mirroring plus a live Wi-Fi video stream keeps the CPU and radio busy enough to get warm.
 
+
+---
+
+## 13. Speed + cost pass, Play on TV, and email turned on (Nov 26–27 2026)
+
+Shipped to production on **Nov 27 2026** (commits `d4173a4`..`41196bb`, pushed to GitHub `master` and deployed with the Vercel CLI). Type-checked and `next build` verified. **Not yet verified with real players:** the realtime-aware polling below (see "Open items").
+
+### Speed ("Phase 2 (speed)", parts 1–5)
+- **Server (`d4173a4`):** realtime broadcasts and write-backs no longer block the response; Instagram dead-end links are skipped and negatively cached; `requireGroupMod` runs in parallel; **Next** responds instantly and rolls back if the write fails.
+- **Phone (`5530a83`):** instant lock-in feedback, parallelized join/rejoin, framer-motion and `GrandReveal` dropped from the `/join` bundle, `supabase-browser` lazy-loaded.
+- **Submit page (`7b6425e`):** the initial group/roster lookup is server-rendered; `GET /api/submit` remains only for client retries.
+- **Auth and host UI (`99c5574`):** `getClaims()` verifies the JWT locally; the host panel mounts `useSeat` once; the right column unmounts while fullscreen; `SharePanel`'s QR code is lazy-loaded.
+- **Opening the box (`b28c2fc`):** the box animation overlaps the session-start request; the host play route and `GrandReveal`'s chunk are prefetched; Vercel function region pinned to `iad1` (`vercel.json`) to sit next to Supabase (us-east-2).
+
+### Cost (free-tier headroom), `perf(cost)` commits
+- **Scoreboard in Postgres (`a9a456f`):** `buildState()` used to fetch every `responses` row ever recorded for the session on every ~2s poll. New RPC `public.session_correct_counts(p_session_id, p_exclude_video_id)` (migration `20250101001100`) sums correct guesses server-side; the responses query is narrowed to the current video. `p_exclude_video_id` keeps the in-progress video out of live scores so a ticking scoreboard can't reveal the sender.
+- **Slimmer polls and writes (`7112dbb`):** `direct_url`/`direct_url_expires` are only fetched for the host and only for the current + next video; `/groups` uses one head-count query per group instead of downloading every queued video; `/api/submit` does one lookup plus one bulk upsert (`ON CONFLICT DO NOTHING`) instead of up to 15 inserts; `purgeUpload()` is skipped entirely when uploads are off. Migration `20250101001200_cost_indexes.sql` adds `groups_owner_idx`, `group_moderators_moderator_idx`, `sessions_group_created_idx`.
+- **Realtime-aware polling (`a646f93`, `components/useGameState.ts`):** poll interval widens to **5s (host) / 8s (phones)** only while the realtime channel is confirmed `SUBSCRIBED`, and drops straight back to 2s on error, timeout or close. Broadcast nudges get 0–300ms of random jitter and bursts (e.g. Skip fires two) coalesce into one refetch.
+- **Daily cleanup on the keepalive cron (`41196bb`):** `sweepOrphanedUploads()` (`lib/uploads.ts`) deletes storage files older than 1 hour with no matching `videos.storage_path`; `endStaleSessions()` (`lib/game.ts`) ends sessions left open more than 24h. Each fails independently so the ping itself never fails. `MAX_UPLOAD_BYTES` lowered from 50 MB to **25 MB**.
+- Migrations `1100` and `1200` were applied to the live database through the Management API **before** the code shipped (additive, safe for the older code).
+
+### Play on TV: built, switched off (`264bafe`, `7c131b1`)
+- The cast button now appears for every platform, not only resolved Instagram reels. For TikTok/YouTube/Facebook iframes there is no `<video>` element to cast, so tapping it explains that and points at iOS Control Center → Screen Mirroring. Also fixed a race where the first tap after a clip change did nothing (`useAirPlay` now tracks the native `<video>`'s `readyState`).
+- **Currently disabled** by `AIRPLAY_FEATURE_ENABLED = false` in `components/EmbedPlayer.tsx` because it needs real iPhone + Apple TV testing. Re-enabling is a one-line flip.
+
+### Automated email is ON
+- `RESEND_API_KEY` is set in Vercel production (added Nov 27 2026). On a new moderator sign-up, `lib/notify.ts` emails the admin with the person's name, email, IP, browser and a link to `/admin`. Tested end to end on production; Resend reported the message as delivered.
+- **Limit:** with no verified domain the sender is `onboarding@resend.dev`, which Resend only delivers to the email on the Resend account. Emailing requesters (approved/denied) or moderators (game recaps) needs a verified domain and `NOTIFY_FROM` set to an address on it.
+- Best effort: if Resend fails, sign-up still works and the request still appears in `/admin`.
+
+### Hosting and workflow facts (corrections to earlier sections)
+- **Deploys are not triggered by GitHub pushes.** The Vercel project is not connected to the GitHub repo; every production deployment so far came from the CLI. To ship: `npm run build`, then `npx vercel deploy --prod --scope open-the-box` (needs `VERCEL_TOKEN`). Pushing to GitHub only backs up and tracks the code. (`vercel git connect --scope open-the-box` would change this; not done.)
+- Production env vars in Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `IG_SESSIONID`, `RESEND_API_KEY`. `UPLOADS_ENABLED` is not set, so camera-roll uploads are off.
+- Migrations are applied through the Supabase Management API, so the project has no `supabase_migrations.schema_migrations` table; check what is applied by querying the catalog (e.g. `pg_proc`, `pg_indexes`), not that table. Migration files now run `...000000` to `...001200`.
+- The answer timer is **300 seconds** (sections 1–2 still say 2.5 minutes in places; the database setting wins). The grand reveal is about 6.5s (section 11).
+- `ALL-SOURCE.md`, mentioned at the top of this file, is not in the repo; read the source directly.
+- A lot of the Nov 26 work was done in Cursor sessions (commits carry `Co-authored-by: Cursor`); notes here come from commit messages and a review of the code, not from a retest of each item.
+
+### Open items
+1. **Verify realtime polling with a live game** (host + 2 phones): confirm lock-ins, Skip and Reveal now reach every screen within about a second. If updates only appear after 5–8s, revert `a646f93` and redeploy.
+2. Play on TV needs a real device before `AIRPLAY_FEATURE_ENABLED` goes back to `true`.
+3. Instagram open-in-app deep links, the iOS tap fix and the restricted-reel `IG_SESSIONID` path are still untested on real phones (earlier sections).
+4. No automated tests exist; checks so far are `tsc`, `next build` and ad-hoc browser harnesses.
