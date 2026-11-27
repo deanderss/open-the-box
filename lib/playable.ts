@@ -9,6 +9,7 @@
  *  - TikTok: oEmbed fails for removed/private videos.
  * Everything fails OPEN: if a check errors, times out or is ambiguous we say "unknown" and play the video.
  */
+import { fetchWithTimeout, IPHONE_UA } from "./http";
 
 export type Playability = "ok" | "restricted" | "gone" | "unknown";
 
@@ -21,24 +22,13 @@ export interface Media {
 type Cached = { v: Media; t: number };
 const cache = new Map<string, Cached>();
 const TTL_MS = 30 * 60 * 1000;
+// Platform checks give up after 5s.
+const CHECK_MS = 5000;
 const UNKNOWN_TTL_MS = 2 * 60 * 1000;
-
-const MOBILE_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
-
-async function get(url: string, headers: Record<string, string> = {}, ms = 5000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { signal: ctrl.signal, headers, redirect: "follow", cache: "no-store" });
-  } finally {
-    clearTimeout(t);
-  }
-}
 
 async function instagram(embedUrl: string): Promise<Media> {
   // /reel/, /p/ and /tv/ serve the same embed page for the same shortcode.
-  const res = await get(embedUrl, { "User-Agent": MOBILE_UA, "Accept-Language": "en-US,en;q=0.9" });
+  const res = await fetchWithTimeout(embedUrl, { "User-Agent": IPHONE_UA, "Accept-Language": "en-US,en;q=0.9" }, CHECK_MS);
   if (res.status === 404) return { playability: "gone" };
   const html = await res.text();
   if (/may be broken, or the post may have been removed/i.test(html)) return { playability: "gone" };
@@ -54,7 +44,7 @@ async function instagram(embedUrl: string): Promise<Media> {
 async function facebook(embedUrl: string): Promise<Playability> {
   // The plugin page itself says so when a video can't be embedded (music rights etc.) or is gone.
   // Only the phone layout is reliable for this: the desktop page always contains the phrase in its scripts.
-  const res = await get(embedUrl, { "User-Agent": MOBILE_UA, "Accept-Language": "en-US,en;q=0.9" });
+  const res = await fetchWithTimeout(embedUrl, { "User-Agent": IPHONE_UA, "Accept-Language": "en-US,en;q=0.9" }, CHECK_MS);
   if (res.status === 404) return "gone";
   const html = await res.text();
   if (/can.t be embedded|may contain content owned by someone else/i.test(html)) return "restricted";
@@ -63,7 +53,7 @@ async function facebook(embedUrl: string): Promise<Playability> {
 }
 
 async function youtube(sourceUrl: string): Promise<Playability> {
-  const res = await get(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(sourceUrl)}`);
+  const res = await fetchWithTimeout(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(sourceUrl)}`, {}, CHECK_MS);
   if (res.status === 200) return "ok";
   if (res.status === 401 || res.status === 403) return "restricted"; // embedding disabled by the owner
   if (res.status === 404 || res.status === 400) return "gone";
@@ -71,7 +61,7 @@ async function youtube(sourceUrl: string): Promise<Playability> {
 }
 
 async function tiktok(sourceUrl: string): Promise<Playability> {
-  const res = await get(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, { "User-Agent": MOBILE_UA });
+  const res = await fetchWithTimeout(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, { "User-Agent": IPHONE_UA }, CHECK_MS);
   if (res.status === 200) {
     const j = (await res.json().catch(() => null)) as { html?: string; code?: number } | null;
     return j && j.html ? "ok" : "unknown";
@@ -96,8 +86,4 @@ export async function checkMedia(v: { platform: string; embedUrl: string; source
   cache.set(key, { v: result, t: Date.now() });
   if (cache.size > 500) cache.delete(cache.keys().next().value as string);
   return result;
-}
-
-export async function checkPlayable(v: { platform: string; embedUrl: string; sourceUrl: string }): Promise<Playability> {
-  return (await checkMedia(v)).playability;
 }

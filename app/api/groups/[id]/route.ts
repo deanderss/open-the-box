@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
+import { handle, body, HttpError, requireGroupMod, check } from "@/lib/api";
 import { json, isHexColor } from "@/lib/util";
 import { purgeGroupUploads } from "@/lib/uploads";
 
@@ -13,7 +13,7 @@ export const PATCH = handle(async (req, { params }) => {
     patch.color = color;
   }
   if (emoji) patch.emoji = emoji.slice(0, 8);
-  await supabaseAdmin().from("groups").update(patch).eq("id", params.id);
+  check(await supabaseAdmin().from("groups").update(patch).eq("id", params.id));
   return json({ ok: true });
 });
 
@@ -21,6 +21,6 @@ export const DELETE = handle(async (_req, { params }) => {
   const { role } = await requireGroupMod(params.id);
   if (role !== "owner") throw new HttpError(403, "Only the box owner can delete it");
   await purgeGroupUploads([params.id]);
-  await supabaseAdmin().from("groups").delete().eq("id", params.id);
+  check(await supabaseAdmin().from("groups").delete().eq("id", params.id));
   return json({ ok: true });
 });

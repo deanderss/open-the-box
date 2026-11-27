@@ -5,12 +5,13 @@ import { confettiShape, fireConfetti } from "@/lib/confetti";
 import Avatar from "@/components/Avatar";
 import BoxMascot, { Mood } from "@/components/BoxMascot";
 import type { SubmitLookup } from "@/lib/submitLookup";
+import { MAX_FILES_PER_SUBMIT, MAX_UPLOAD_BYTES } from "@/lib/uploadLimits";
 
 type Result = { url: string; status: "added" | "duplicate" | "invalid" | "full" | "error"; message?: string };
 
 // Personal videos from the camera roll (see lib/uploads.ts for the server side of these limits)
-const MAX_UPLOAD_MB = 50;
-const MAX_FILES = 5;
+const MAX_UPLOAD_MB = MAX_UPLOAD_BYTES / (1024 * 1024);
+const MAX_FILES = MAX_FILES_PER_SUBMIT;
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm|3gp)$/i;
 const isVideoFile = (f: File) => f.type.startsWith("video/") || VIDEO_EXT.test(f.name);
 
@@ -275,7 +276,7 @@ export default function SubmitClient({ token, initial }: { token: string; initia
                 </motion.button>
               ))}
             </div>
-            {roster.length === 0 && <p className="text-center text-white/70">Nobody's on the roster yet. Ask your moderator to add you!</p>}
+            {roster.length === 0 && <p className="text-center text-white/70">Nobody&apos;s on the roster yet. Ask your moderator to add you!</p>}
           </motion.div>
         )}
 

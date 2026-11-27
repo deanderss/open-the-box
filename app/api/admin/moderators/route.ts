@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { handle, body, HttpError, requireAdmin } from "@/lib/api";
+import { handle, body, HttpError, requireAdmin, check } from "@/lib/api";
 import { json } from "@/lib/util";
 import { purgeGroupUploads } from "@/lib/uploads";
 
@@ -23,7 +23,7 @@ export const POST = handle(async (req) => {
   const suspend = action === "suspend";
   const { error } = await db.auth.admin.updateUserById(id, { ban_duration: suspend ? BLOCKED : "none" });
   if (error) throw new HttpError(400, error.message);
-  await db.from("moderators").update({ suspended: suspend }).eq("id", id);
+  check(await db.from("moderators").update({ suspended: suspend }).eq("id", id));
   return json({ ok: true });
 });
 
@@ -43,14 +43,14 @@ export const DELETE = handle(async (req) => {
   if (q.get("boxes") === "delete") {
     if (owned?.length) {
       await purgeGroupUploads(owned.map((g) => g.id));
-      await db.from("groups").delete().in("id", owned.map((g) => g.id));
+      check(await db.from("groups").delete().in("id", owned.map((g) => g.id)));
     }
   } else {
     for (const g of owned || []) {
       const { data: co } = await db.from("group_moderators").select("moderator_id").eq("group_id", g.id).neq("moderator_id", id).limit(1).maybeSingle();
       const heir = co?.moderator_id || uid;
-      await db.from("groups").update({ owner_id: heir }).eq("id", g.id);
-      await db.from("group_moderators").upsert({ group_id: g.id, moderator_id: heir, role: "owner" }, { onConflict: "group_id,moderator_id" });
+      check(await db.from("groups").update({ owner_id: heir }).eq("id", g.id));
+      check(await db.from("group_moderators").upsert({ group_id: g.id, moderator_id: heir, role: "owner" }, { onConflict: "group_id,moderator_id" }));
     }
   }
   const { error } = await db.auth.admin.deleteUser(id);

@@ -3,6 +3,7 @@ import TopBar from "@/components/TopBar";
 import { getMe } from "@/lib/me";
 import { supabaseAdmin } from "@/lib/supabase-server";
 import AdminPanel from "./AdminPanel";
+import { DEFAULTS } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export default async function AdminPage() {
         <p className="mt-1 text-white/70">Approve new moderators and manage seats. Pending requests hold a seat until you decide.</p>
         <AdminPanel
           meId={mod.id}
-          cap={settings?.max_moderators ?? 10}
+          cap={settings?.max_moderators ?? DEFAULTS.max_moderators}
           mods={(mods || []).map((m) => ({ id: m.id, name: m.display_name, email: m.email, isAdmin: m.is_admin, suspended: !!m.suspended, createdAt: m.created_at, boxes: counts.get(m.id) || 0 }))}
           requests={(reqs || []).map((r) => ({ id: r.id, name: r.display_name, email: r.email, status: r.status as "pending" | "approved" | "denied", ip: r.ip, userAgent: r.user_agent, createdAt: r.created_at, decidedAt: r.decided_at }))}
         />

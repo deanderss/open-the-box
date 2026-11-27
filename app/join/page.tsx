@@ -301,7 +301,7 @@ function Controller({
 
       {s.paused && s.state !== "finished" && (
         <Panel emoji="⏸" title="Game paused">
-          The host paused the game. Keep this page open. It'll pick up right where it left off.
+          The host paused the game. Keep this page open. It&apos;ll pick up right where it left off.
         </Panel>
       )}
 

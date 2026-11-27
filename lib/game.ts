@@ -7,6 +7,7 @@ import { SENDER_BONUS } from "./points";
 import { HttpError } from "./api";
 import { background } from "./background";
 import { computeAwards, AWARDS_DONE, type Award } from "./awards";
+import { getSettings } from "./settings";
 
 export type SessionRow = {
   id: string;
@@ -26,21 +27,9 @@ export type SessionRow = {
 
 const db = () => supabaseAdmin();
 
-// The answer window rarely changes mid-game, but buildState reads it on every single poll (every host and
-// phone, every 2s). Caching it per server instance for a minute avoids paying for that round trip every time.
-// 300s matches the actual default in app_settings (supabase/migrations/20250101000300_pause_and_limits.sql) —
-// this fallback only matters when the read below fails, and a wrong value that's too SHORT would auto-reveal
-// a video (and lock out any late answers) well before the timer on screen says time's up.
-const DEFAULT_WINDOW_SECONDS = 300;
-let windowCache: { v: number; until: number } | null = null;
+/** The answer window, from the cached settings (lib/settings.ts): read on every poll, so never a query each time. */
 export async function getWindowSeconds() {
-  const now = Date.now();
-  if (windowCache && windowCache.until > now) return windowCache.v;
-  const { data, error } = await db().from("app_settings").select("answer_window_seconds").eq("id", 1).single();
-  if (error || data == null) return DEFAULT_WINDOW_SECONDS; // don't cache a failure — retry on the very next poll
-  const v = (data.answer_window_seconds as number) ?? DEFAULT_WINDOW_SECONDS;
-  windowCache = { v, until: now + 60_000 };
-  return v;
+  return (await getSettings()).answer_window_seconds;
 }
 
 const DB_DOWN = "The game service is having trouble — try again in a moment";
@@ -306,7 +295,8 @@ export async function finishSession(s: SessionRow) {
 export async function endStaleSessions() {
   const { data } = await db()
     .from("sessions")
-    .update({ state: "finished", ended_at: new Date().toISOString() })
+    // awards_step too: nobody is at the TV for a ceremony a day later, so phones skip straight to the results.
+    .update({ state: "finished", ended_at: new Date().toISOString(), awards_step: AWARDS_DONE })
     .is("ended_at", null)
     .lt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
     .select("id");

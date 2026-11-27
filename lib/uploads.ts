@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "./supabase-server";
 import { HttpError } from "./api";
 
+export { MAX_UPLOAD_BYTES, MAX_FILES_PER_SUBMIT } from "./uploadLimits";
+
 /**
  * Personal videos uploaded from a phone's camera roll.
  * Files go straight from the phone to Supabase Storage through a one-time signed upload URL (so they never pass
@@ -9,13 +11,7 @@ import { HttpError } from "./api";
  */
 
 export const BUCKET = "box-videos";
-// The free Supabase plan's actual per-file limit is 50 MB, but a phone-recorded clip long enough to need
-// anywhere near that is already well past how long a round of this game should take to watch and guess on —
-// halving it to 25 MB costs nothing a real clip needs and halves the worst-case storage/egress per upload on
-// a plan where both are the tightest constraint.
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const MAX_UPLOADS_PER_BOX = 40; // keeps a box well inside the 1 GB free storage quota
-export const MAX_FILES_PER_SUBMIT = 5;
 /** Project-wide ceiling for files waiting to be played. The free plan's quota is 1 GB; stay clear of it. */
 export const MAX_TOTAL_UPLOAD_BYTES = 800 * 1024 * 1024;
 

@@ -2,6 +2,7 @@ import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { BUCKET, MAX_TOTAL_UPLOAD_BYTES, MAX_UPLOAD_BYTES, MAX_UPLOADS_PER_BOX, VIDEO_TYPES, extensionFor, requireSubmitter, requireUploadsEnabled, storedUploadBytes } from "@/lib/uploads";
+import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +21,9 @@ export const POST = handle(async (req) => {
   const ext = extensionFor(filename || "", contentType || "");
   if (!ext) throw new HttpError(400, "That doesn't look like a video we can play (try an MP4 or MOV)");
 
-  const { data: settings } = await db.from("app_settings").select("max_queued_videos_per_group").eq("id", 1).single();
+  const settings = await getSettings();
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "queued");
-  if ((queued ?? 0) >= (settings?.max_queued_videos_per_group ?? 300)) throw new HttpError(409, "The box is stuffed full");
+  if ((queued ?? 0) >= settings.max_queued_videos_per_group) throw new HttpError(409, "The box is stuffed full");
   const { count: uploads } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("platform", "upload").not("storage_path", "is", null);
   if ((uploads ?? 0) >= MAX_UPLOADS_PER_BOX) throw new HttpError(409, "This box already holds a lot of uploaded videos. Wait until some have been played.");
 

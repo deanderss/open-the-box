@@ -67,7 +67,7 @@ export default async function GroupLobby({ params }: { params: { groupId: string
               <span className="text-5xl">🕵️</span>
               <div>
                 <p className="title text-2xl text-mint">Leaderboard</p>
-                <p className="text-sm text-white/70">Who's the best at guessing the sender?</p>
+                <p className="text-sm text-white/70">Who&apos;s the best at guessing the sender?</p>
               </div>
             </Link>
             <SharePanel groupId={group.id} origin={origin} token={group.submit_token} />

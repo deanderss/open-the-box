@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { handle, body, HttpError, requireAdmin } from "@/lib/api";
+import { handle, body, HttpError, requireAdmin, check } from "@/lib/api";
 import { json } from "@/lib/util";
 
 // Approve or deny a pending moderator request. Admin only.
@@ -17,7 +17,7 @@ export const POST = handle(async (req) => {
     if (!r.user_id) throw new HttpError(409, "This account no longer exists");
     const { error } = await db.auth.admin.updateUserById(r.user_id, { ban_duration: "none" });
     if (error) throw new HttpError(400, error.message);
-    await db.from("moderators").update({ approved: true }).eq("id", r.user_id);
+    check(await db.from("moderators").update({ approved: true }).eq("id", r.user_id));
   } else if (r.user_id) {
     // Deleting the blocked account frees its seat; the request row keeps the history.
     const { error } = await db.auth.admin.deleteUser(r.user_id);

@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { layoutFor, place } from "@/lib/immersive";
 import { openInApp } from "@/lib/openInApp";
 import { scrollToTop } from "@/lib/fullscreen";
+import { SITE } from "@/lib/sites";
 
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
@@ -26,7 +27,6 @@ function useViewport(active: boolean) {
   return v;
 }
 
-const SITE: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", facebook: "Facebook" };
 
 // TEMPORARILY DISABLED (2026-11-26, by request): the "Play on TV" native-cast button is being revisited — for
 // now every clip just relies on the host's normal iOS screen mirroring, same as before this feature existed.
@@ -248,8 +248,7 @@ function StageNativeVideo({
   // Safari's proprietary AirPlay opt-out attribute — "allow" is already the default, but setting it explicitly
   // documents intent and survives if that default ever changes. Not in React's HTML attribute typings, so it's
   // spread in rather than written as a normal JSX prop.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const airplayAttr: any = { "x-webkit-airplay": "allow" };
+    const airplayAttr: any = { "x-webkit-airplay": "allow" };
 
   return (
     <>
@@ -354,8 +353,7 @@ function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anyV = v as any;
+        const anyV = v as any;
 
     // Prefer the Remote Playback API when it's actually usable (some browsers expose `remote` but throw on
     // first touch if the feature is disabled by a permissions policy, so this doesn't just check `"remote" in v`).
@@ -398,8 +396,7 @@ function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
   const trigger = useCallback(() => {
     const v = videoRef.current;
     if (!v || v.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anyV = v as any;
+        const anyV = v as any;
     try {
       const remote = anyV.remote;
       if (remote && typeof remote.prompt === "function") {

@@ -7,6 +7,15 @@ export class HttpError extends Error {
   }
 }
 
+/** Throw a friendly error (and log the real one) when a database write failed, instead of reporting success. */
+export function check<T extends { error: unknown }>(res: T, message = "Couldn't save that. Please try again."): T {
+  if (res.error) {
+    console.error(message, res.error);
+    throw new HttpError(503, message);
+  }
+  return res;
+}
+
 export async function requireUser() {
   const uid = await currentUserId();
   if (!uid) throw new HttpError(401, "Please log in");

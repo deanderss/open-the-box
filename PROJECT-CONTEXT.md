@@ -583,3 +583,23 @@ A full review in four phases, each shipped separately: A game experience, B secu
 - **Not changed:** `getSession` still selects `*`, since nearly every caller needs `video_order`.
 
 **Verified:** `tsc`, `next build`. The state endpoint for all 9 real sessions returned the same JSON locally and on production, apart from `serverNow`. The leaderboard returned identical rows before and after. **Not compared:** the host view and a game in progress (no live game to compare against).
+
+### Phase D: cleanliness and flexibility
+- **Settings in one place:** `lib/settings.ts` holds `DEFAULTS` (50 moderators, 10 boxes per moderator, 30 players per box, 300 queued videos per box, 300-second answer window) and `getSettings()`, cached for 60s. A failed read isn't cached. Every route that used its own `?? 300/30/10` fallback now calls it, and so does `getWindowSeconds()`. The admin page's `max_moderators` fallback was 10 and is now 50, matching everything else. Saving settings checks the write, then clears the cache on that server instance. Other instances pick it up within 60s.
+- **Write errors checked:** `check(res)` in `lib/api.ts` turns a failed database write into a 503 with a generic message, and logs the real error. It wraps the single writes in the admin, box, players, co-moderator, link and kick routes. This fixes `groups/[id]/link`, which used to hand back a new submit link even when saving it failed. Two writes are left unwrapped on purpose:
+  - the players insert right after a box is created (failing there would push the moderator to make a duplicate box)
+  - the answer route's rollback delete
+- **Shared helpers:**
+  - `lib/http.ts` (`fetchWithTimeout`, `IPHONE_UA`) replaces three copies across `embeds.ts`, `playable.ts` (keeps its 5s limit) and `igDirect.ts` (6s). `resolveFacebookShare` keeps its own fetch because it reads the body inside its timeout.
+  - `lib/sites.ts` is the one platform-name map, used by `EmbedPlayer` and `/api/submit`.
+  - `lib/uploadLimits.ts` holds the 25 MB and 5-file limits for both the submit page and the upload routes. The page used to say 50 MB.
+- **Dead code:** `checkPlayable` is removed.
+- **Tooling:**
+  - `npm run lint` works now (`eslint` 8 + `eslint-config-next`, `.eslintrc.json` extends `next/core-web-vitals`) and is clean.
+  - Fixed three unescaped apostrophes, and dropped disable comments for a TypeScript rule this config doesn't load.
+  - The two hook dependency lists in the host page that are narrow on purpose are now marked as such.
+  - The unused `supabase` and `vercel` devDependencies are gone. `deploy.sh` uses `npx vercel` and curl.
+- **Stale games:** the daily cron's `endStaleSessions` also sets `awards_step` to done. Every game still open after 24h, paused ones included, ends straight on its results, with no ceremony.
+- **Sender bonus:** already one constant in TypeScript (`SENDER_BONUS` in `lib/points.ts`). The SQL leaderboard view keeps its own 0.5, so the two must be changed together.
+
+**Verified:** `tsc`, `next build`, `next lint`.

@@ -72,6 +72,7 @@ function HostInner({ groupId }: { groupId: string }) {
   const [pendingNext, setPendingNext] = useState<{ index: number; video: NonNullable<GameState["upNext"]>; at: number } | null>(null);
   useEffect(() => {
     if (pendingNext && s && s.index >= pendingNext.index) setPendingNext(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately keyed on the index alone
   }, [pendingNext, s?.index]);
   // Safety net: if the real poll never catches up for some reason (a server hiccup that still returned ok,
   // a dropped realtime nudge), don't leave the stage showing a guess forever.
@@ -143,6 +144,7 @@ function HostInner({ groupId }: { groupId: string }) {
       Math.max(0, msLeft) + 400,
     );
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-armed once per poll, not on every new `s` object
   }, [s?.remainingMs, fetchedAt, s?.state, s?.paused, s?.index, refresh]);
 
   /** Returns whether the action actually succeeded, so callers (e.g. "pause & exit") can decide what to do next. */

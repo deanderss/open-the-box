@@ -19,6 +19,7 @@
  * given reel is only ever looked up again after its link expires, and a dead session backs off for a while
  * instead of being retried on every poll.
  */
+import { fetchWithTimeout, IPHONE_UA } from "./http";
 
 export interface DirectVideo {
   url: string;
@@ -39,22 +40,10 @@ interface RawVideo {
   expiresAt: number;
 }
 
-const EMBED_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 // A real Instagram Android app user agent: the private app API checks for one of these before anything else.
 const APP_UA = "Instagram 309.0.0.41.111 Android (30/11; 420dpi; 1080x2130; samsung; SM-G973F; beyond1; exynos9820; en_US; 458229237)";
 const IG_APP_ID = "936619743392459";
 const EXPIRY_MARGIN_MS = 2 * 60 * 60 * 1000; // don't hand out a link that's about to expire mid-game
-
-async function get(url: string, headers: Record<string, string>, ms = 6000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { signal: ctrl.signal, headers, redirect: "follow", cache: "no-store" });
-  } finally {
-    clearTimeout(t);
-  }
-}
 
 /** The expiry on Instagram's signed CDN links is the `oe=` query param: hex seconds since epoch. */
 function expiryOf(url: string): number {
@@ -101,7 +90,7 @@ function shortcodeToMediaId(code: string): string | null {
 
 async function anonymous(embedUrl: string): Promise<DirectVideo | null> {
   try {
-    const res = await get(embedUrl, { "User-Agent": EMBED_UA, "Accept-Language": "en-US,en;q=0.9" });
+    const res = await fetchWithTimeout(embedUrl, { "User-Agent": IPHONE_UA, "Accept-Language": "en-US,en;q=0.9" });
     if (!res.ok) return null;
     const raw = extractVideoUrl(await res.text());
     return raw ? { ...raw, source: "anonymous" } : null;
@@ -128,7 +117,7 @@ async function loggedInViaAppApi(shortcode: string, sid: string): Promise<Direct
   const mediaId = shortcodeToMediaId(shortcode);
   if (!mediaId) return null;
   try {
-    const res = await get(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+    const res = await fetchWithTimeout(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
       "User-Agent": APP_UA,
       Cookie: `sessionid=${sid}`,
       "X-IG-App-ID": IG_APP_ID,
@@ -149,7 +138,7 @@ async function loggedInViaAppApi(shortcode: string, sid: string): Promise<Direct
 /** Fallback for the logged-in step: the same embed page, but with the session cookie attached. */
 async function loggedInViaEmbed(embedUrl: string, sid: string): Promise<DirectVideo | "dead" | null> {
   try {
-    const res = await get(embedUrl, { "User-Agent": EMBED_UA, Cookie: `sessionid=${sid}`, "X-IG-App-ID": IG_APP_ID });
+    const res = await fetchWithTimeout(embedUrl, { "User-Agent": IPHONE_UA, Cookie: `sessionid=${sid}`, "X-IG-App-ID": IG_APP_ID });
     if (res.status === 401 || res.status === 403) return "dead";
     if (!res.ok) return null;
     const raw = extractVideoUrl(await res.text());

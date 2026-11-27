@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
+import { handle, body, HttpError, requireGroupMod, check } from "@/lib/api";
 import { json } from "@/lib/util";
 import {
   getSession,
@@ -76,7 +76,7 @@ export const POST = handle(async (req) => {
       break;
     case "kick":
       if (playerId) {
-        await supabaseAdmin().from("session_players").delete().eq("session_id", s.id).eq("player_id", playerId);
+        check(await supabaseAdmin().from("session_players").delete().eq("session_id", s.id).eq("player_id", playerId));
         broadcast(s.id);
       }
       break;

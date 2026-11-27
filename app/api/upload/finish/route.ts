@@ -2,6 +2,7 @@ import { handle, body, HttpError } from "@/lib/api";
 import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { BUCKET, MAX_UPLOAD_BYTES, UPLOAD_PATH_RE, publicUrl, requireSubmitter, requireUploadsEnabled } from "@/lib/uploads";
+import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,9 @@ export const POST = handle(async (req) => {
     throw new HttpError(400, "That file isn't a video we can play");
   }
 
-  const { data: settings } = await db.from("app_settings").select("max_queued_videos_per_group").eq("id", 1).single();
+  const settings = await getSettings();
   const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "queued");
-  if ((queued ?? 0) >= (settings?.max_queued_videos_per_group ?? 300)) {
+  if ((queued ?? 0) >= settings.max_queued_videos_per_group) {
     await db.storage.from(BUCKET).remove([path]);
     return json({ status: "full" });
   }

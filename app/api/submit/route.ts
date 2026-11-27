@@ -5,12 +5,10 @@ import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
 import { checkMedia } from "@/lib/playable";
 import { groupByToken, loadSubmitPage } from "@/lib/submitLookup";
+import { getSettings } from "@/lib/settings";
+import { SITE } from "@/lib/sites";
 
 export const dynamic = "force-dynamic";
-
-function siteName(platform: string) {
-  return platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
-}
 
 // The page itself now loads this server-side on first visit — this GET is kept only for the client's own
 // "something went wrong, try again" retry button, which has no other way to re-ask.
@@ -32,9 +30,9 @@ export const POST = handle(async (req) => {
   const urls = extractUrls(text).slice(0, 15);
   if (!urls.length) throw new HttpError(400, "Paste at least one TikTok, Instagram, Facebook or YouTube Shorts link");
 
-  const { data: settings } = await db.from("app_settings").select("max_queued_videos_per_group").eq("id", 1).single();
+  const settings = await getSettings();
   const { count: queued } = await db.from("videos").select("id", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
-  const room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
+  const room = settings.max_queued_videos_per_group - (queued ?? 0);
 
   // Resolve every link first (share links need a fetch to find the real video).
   const resolved = await Promise.all(
@@ -127,9 +125,9 @@ export const POST = handle(async (req) => {
       status,
       message:
         playable === "restricted"
-          ? `Added! Heads up: ${siteName(parsed.platform)} only plays this one in its own app, so the host will open it there`
+          ? `Added! Heads up: ${SITE[parsed.platform] ?? "The site"} only plays this one in its own app, so the host will open it there`
           : playable === "gone"
-            ? `Added! Heads up: ${siteName(parsed.platform)} says this one may be removed or private, so the host will check it in the app`
+            ? `Added! Heads up: ${SITE[parsed.platform] ?? "The site"} says this one may be removed or private, so the host will check it in the app`
             : undefined,
     };
   });
