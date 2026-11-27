@@ -4,7 +4,7 @@ import { json } from "@/lib/util";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 import { extractUrls, parseVideoUrl, needsExpansion, expandUrl } from "@/lib/embeds";
 import { checkMedia } from "@/lib/playable";
-import { uploadsEnabled } from "@/lib/uploads";
+import { groupByToken, loadSubmitPage } from "@/lib/submitLookup";
 
 export const dynamic = "force-dynamic";
 
@@ -12,23 +12,12 @@ function siteName(platform: string) {
   return platform === "instagram" ? "Instagram" : platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
 }
 
-async function groupByToken(token: string | null) {
-  if (!token || token.length < 16) throw new HttpError(404, "This link is invalid or has been replaced");
-  const { data } = await supabaseAdmin().from("groups").select("id,name,color,emoji").eq("submit_token", token).maybeSingle();
-  if (!data) throw new HttpError(404, "This link is invalid or has been replaced");
-  return data;
-}
-
+// The page itself now loads this server-side on first visit — this GET is kept only for the client's own
+// "something went wrong, try again" retry button, which has no other way to re-ask.
 export const GET = handle(async (req) => {
   if (!rateLimit("submitget:" + clientIp(req), 120, 60 * 60 * 1000)) throw new HttpError(429, "Slow down!");
-  const g = await groupByToken(new URL(req.url).searchParams.get("token"));
-  const { data: roster } = await supabaseAdmin()
-    .from("players")
-    .select("id,display_name,avatar_color")
-    .eq("group_id", g.id)
-    .eq("active", true)
-    .order("display_name");
-  return json({ uploadsEnabled: uploadsEnabled(), group: { name: g.name, color: g.color, emoji: g.emoji }, roster: (roster || []).map((p) => ({ id: p.id, name: p.display_name, color: p.avatar_color })) });
+  const data = await loadSubmitPage(new URL(req.url).searchParams.get("token"));
+  return json(data);
 });
 
 export const POST = handle(async (req) => {
