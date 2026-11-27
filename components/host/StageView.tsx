@@ -73,42 +73,53 @@ export default function StageView({
           directUrl={state.video.directUrl}
           next={state.upNext}
           fullscreen={fullscreen}
-          overlay={
+          pinOverlay={answerOpen || moreOpen}
+          overlay={(visible) => (
             <div className="text-white">
               <TimerBar remainingMs={s.remainingMs} fetchedAt={fetchedAt} totalSeconds={s.windowSeconds} active={s.state === "playing"} />
+              {/* The timer bar and this small countdown stay up for the whole video — everything else here
+                  (the "locked in" count and the action buttons) fades out after a few seconds of no touches,
+                  and back in on a tap (see EmbedPlayer's `overlayVisible`), so there's less for screen
+                  mirroring/AirPlay to keep re-encoding while nobody's actually looking at the controls. */}
               <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
                 <div className="flex items-center gap-3 drop-shadow">
                   <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={40} />
-                  <span className="font-display text-base">
-                    <span className="text-mint">{state.answered}</span>
-                    <span className="text-white/70"> / {state.eligible} locked in</span>
-                  </span>
+                  {visible && (
+                    <span className="font-display text-base">
+                      <span className="text-mint">{state.answered}</span>
+                      <span className="text-white/70"> / {state.eligible} locked in</span>
+                    </span>
+                  )}
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
-                  <button className="btn btn-pink btn-sm" disabled={busy} onClick={() => act("reveal")}>
+                <div
+                  className={`flex flex-wrap items-center justify-end gap-1.5 transition-opacity duration-200 ${visible ? "opacity-100" : "pointer-events-none opacity-0"}`}
+                  aria-hidden={!visible}
+                >
+                  <button className="btn btn-pink btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} onClick={() => act("reveal")}>
                     Reveal now
                   </button>
                   {answerStatus.visible && (
-                    <button className="btn btn-yellow btn-sm" onClick={() => setAnswerOpen(true)}>
+                    <button className="btn btn-yellow btn-sm" tabIndex={visible ? undefined : -1} onClick={() => setAnswerOpen(true)}>
                       📝 Answer
                     </button>
                   )}
                   {/* Skip / Reload / Pause: full buttons from sm up, folded into "More" below that so the
                       bar doesn't wrap onto three lines on a phone. */}
                   <div className="hidden items-center gap-1.5 sm:flex">
-                    <button className="btn btn-ghost btn-sm" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+                    <button className="btn btn-ghost btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Video won't load? Skip it." onClick={() => act("skip")}>
                       Skip <span aria-hidden>⏭</span>
                     </button>
-                    <button className="btn btn-ghost btn-sm" title="Video stuck or black? Reload it (the timer keeps running)." aria-label="Reload video" onClick={() => setReloadN((n) => n + 1)}>
+                    <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Video stuck or black? Reload it (the timer keeps running)." aria-label="Reload video" onClick={() => setReloadN((n) => n + 1)}>
                       <span aria-hidden>↻</span>
                     </button>
-                    <button className="btn btn-sky btn-sm" disabled={busy} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
+                    <button className="btn btn-sky btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
                       <span aria-hidden>⏸</span>
                     </button>
                   </div>
                   <div className="relative sm:hidden">
                     <button
                       className="btn btn-ghost btn-sm"
+                      tabIndex={visible ? undefined : -1}
                       aria-haspopup="true"
                       aria-expanded={moreOpen}
                       aria-label="More actions"
@@ -150,13 +161,13 @@ export default function StageView({
                       </div>
                     )}
                   </div>
-                  <button className="btn btn-ghost btn-sm" title="Back to the window view" onClick={() => setWantFull(false)}>
+                  <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Back to the window view" onClick={() => setWantFull(false)}>
                     <span aria-hidden>⤡</span> Exit
                   </button>
                 </div>
               </div>
             </div>
-          }
+          )}
         />
         {s.state === "playing" && !fullscreen && (
           <div className="flex gap-2">
@@ -195,7 +206,9 @@ export default function StageView({
       </div>
       <div className="flex flex-col gap-4">
         {s.state === "playing" ? (
-          <div className="card flex flex-col items-center gap-4">
+          // card-flat, not card: no backdrop-blur while a video is actually playing — one less thing behind
+          // this panel that has to be re-blurred every frame for screen mirroring/AirPlay to re-encode.
+          <div className="card-flat flex flex-col items-center gap-4">
             <p className="title text-2xl">Rate it &amp; guess who sent it!</p>
             <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={150} />
             <p className="font-display text-3xl">
@@ -222,8 +235,10 @@ export default function StageView({
             sticky bar pinned to the bottom of the screen so they're always one tap away without scrolling
             past scores or the guess list. */}
         {s.state === "playing" && (
+          // No backdrop-blur here either, same reason as card-flat above — this bar sits over the video for
+          // the whole clip.
           <div
-            className="sticky bottom-0 z-20 -mx-6 flex gap-2 bg-night/95 px-6 py-3 backdrop-blur lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0 lg:backdrop-blur-0"
+            className="sticky bottom-0 z-20 -mx-6 flex gap-2 bg-night/95 px-6 py-3 lg:static lg:mx-0 lg:bg-transparent lg:px-0 lg:py-0"
             style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
           >
             <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>

@@ -47,6 +47,9 @@ body {
   .btn-ghost { @apply bg-white/10 text-white hover:bg-white/20; }
   .btn-danger { @apply bg-[#FF5E5E] text-white hover:brightness-110; }
   .card { @apply rounded-3xl bg-plum/80 border-4 border-black/30 shadow-chunky p-6 backdrop-blur; }
+  /* Same as .card, minus the blur: for anything shown while a video is playing (next to the stage, or in a
+     sticky bar over it) — re-blurring the live video behind it every frame adds up for screen mirroring/AirPlay. */
+  .card-flat { @apply rounded-3xl bg-plum/80 border-4 border-black/30 shadow-chunky p-6; }
   .input { @apply w-full rounded-2xl border-4 border-black/30 bg-white px-4 py-3 text-lg text-night placeholder:text-night/40 focus:outline-none focus:border-sunny; }
   .label { @apply mb-1 block font-display text-sm uppercase tracking-widest text-white/70; }
   .title { @apply font-display font-bold tracking-tight; text-shadow: 0 4px 0 rgba(0,0,0,0.35); }

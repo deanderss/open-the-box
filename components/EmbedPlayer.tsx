@@ -1,5 +1,5 @@
 "use client";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { layoutFor, place } from "@/lib/immersive";
 import { openInApp } from "@/lib/openInApp";
 import { scrollToTop } from "@/lib/fullscreen";
@@ -40,13 +40,15 @@ type Media = {
   directUrl?: string;
 };
 
-/**
- * Which videos can be loaded invisibly ahead of time. Facebook is left out: its player can't be told to start
- * later. A `blocked` video can still be preloaded if it also has a `directUrl` (a restricted reel the spare
- * account's session resolved): it plays as a normal native video, `blocked` is only a fallback in case that
- * link stops working.
- */
-const canPreload = (m: Media) => (!m.blocked || !!m.directUrl) && m.platform !== "facebook";
+/** A personal upload, or an Instagram reel with a resolved direct link: plays in the single shared native
+ *  <video> (see StageNativeVideo) instead of a cross-origin iframe. */
+const isNativeCandidate = (m: Media) => m.platform === "upload" || (m.platform === "instagram" && !!m.directUrl);
+
+/** Which non-native videos can be loaded invisibly ahead of time as an iframe. Facebook is left out: its
+ *  player can't be told to start later. A `blocked` video can't be usefully preloaded as an iframe — it'll
+ *  just show the panel — so it's left out too (a blocked video *with* a direct link is a native candidate
+ *  above, and gets preloaded as a native video instead, not an iframe). */
+const canPreloadIframe = (m: Media) => !m.blocked && m.platform !== "facebook";
 
 /** The same embed, but told NOT to start by itself (a preloaded video must stay silent until it is shown). */
 function preloadSrc(platform: string, url: string) {
@@ -69,18 +71,82 @@ function youtubePlay(frame: HTMLIFrameElement | null) {
   }
 }
 
+/** The "open it in the app" fallback, shared by the iframe Slot (a restricted/gone embed) and the native stage
+ *  (a resolved Instagram direct link that stopped working at runtime). */
+function BlockedPanel({
+  platform,
+  blocked,
+  sourceUrl,
+  fullscreen,
+  onTryAnyway,
+}: {
+  platform: string;
+  blocked: "restricted" | "gone";
+  sourceUrl?: string;
+  fullscreen: boolean;
+  onTryAnyway?: () => void;
+}) {
+  const site = SITE[platform] ?? "the site";
+  return (
+    <div
+      className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 overflow-y-auto bg-night p-6 text-center text-white ${fullscreen ? "pt-24" : ""}`}
+    >
+      <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-5xl shadow-chunky">📲</div>
+      <h2 className="font-display text-2xl leading-tight sm:text-3xl">
+        {blocked === "gone" ? "This one may be gone" : `This one plays on ${site}`}
+      </h2>
+      <p className="max-w-xs text-sm text-white/70">
+        {blocked === "gone"
+          ? `${site} says this video is removed or private. Open it in the app to check, and play it there if it still works, then come back here for the answers.`
+          : `${site} only lets this video play in its own app. Tap the button to open it there, play it for everyone, then come back here for the answers.`}
+      </p>
+      {sourceUrl && (
+        <button type="button" className="btn btn-yellow touch-manipulation" onClick={() => openInApp(platform, sourceUrl)}>
+          Open in the {site} app ↗
+        </button>
+      )}
+      <div className="flex flex-col items-center gap-1 text-xs text-white/70">
+        {sourceUrl && (
+          <a className="underline hover:text-white/80" href={sourceUrl} target="_blank" rel="noreferrer">
+            Open in the browser instead
+          </a>
+        )}
+        {onTryAnyway && (
+          <button type="button" className="underline hover:text-white/80" onClick={onTryAnyway}>
+            Try playing it here anyway
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
- * A video played directly from a file rather than through a third-party iframe: a personal upload from
- * someone's camera roll, or (for Instagram) a direct link resolved by lib/igDirect.ts. Either way nothing can
- * be "restricted", there's no cross-origin chrome to crop away, and it can fill the stage. Tries to start with
- * sound (the host has just tapped something, so browsers usually allow it); if the browser refuses it starts
- * muted and offers a "Tap for sound" button. Loops, like a reel. While `active` is false it only buffers
- * (preloading). If the file never becomes playable (bad/expired link, decode failure, or a stall) `onError`
- * fires once, so a resolved-but-dead Instagram link can fall back to the embed instead of a black screen —
- * uploads have nowhere else to fall back to, so they simply don't pass one.
+ * The one native <video> element for the whole stage: a personal upload, or an Instagram reel resolved to a
+ * direct link (lib/igDirect.ts), plays through it — only its `src` changes between clips — instead of a fresh
+ * element per clip. This stays mounted for the entire game (see EmbedPlayer below), visible only while the
+ * current clip is a native one, rather than being created and destroyed with each <Slot>: an AirPlay
+ * connection is tied to a specific element, so swapping `src` in place gives the best chance it survives from
+ * one native clip to the next instead of asking the host to pick the TV again every time (confirming that
+ * actually holds across a real `src` swap needs a real device — if it doesn't, the "Play on TV" button is
+ * still one tap away per clip).
+ *
+ * Tries to start with sound (the host has just tapped something, so browsers usually allow it); if the browser
+ * refuses it starts muted and offers a "Tap for sound" button. Loops, like a reel. If the file never becomes
+ * playable (bad/expired link, decode failure, or a stall) `onError` fires once, so a resolved-but-dead
+ * Instagram link can fall back to the embed instead of a black screen — an upload has nowhere else to fall
+ * back to, so it simply doesn't pass one.
  */
-function NativeVideo({ src, active, onError }: { src: string; active: boolean; onError?: () => void }) {
-  const ref = useRef<HTMLVideoElement>(null);
+function StageNativeVideo({
+  videoRef,
+  src,
+  onError,
+}: {
+  videoRef: RefObject<HTMLVideoElement>;
+  /** null: nothing native to show right now — the element stays mounted, just paused and hidden by the caller */
+  src: string | null;
+  onError?: () => void;
+}) {
   const [ready, setReady] = useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [cover, setCover] = useState(false);
@@ -90,37 +156,53 @@ function NativeVideo({ src, active, onError }: { src: string; active: boolean; o
     firedRef.current = true;
     onError?.();
   }, [onError]);
+
   useEffect(() => {
     firedRef.current = false;
+    setReady(false);
+    setNeedsTap(false);
   }, [src]);
+
   useEffect(() => {
-    const v = ref.current;
+    const v = videoRef.current;
     if (!v) return;
-    if (!active) {
+    if (!src) {
       v.pause();
       return;
+    }
+    if (v.getAttribute("src") !== src) {
+      v.src = src;
+      v.load();
     }
     v.muted = false;
     v.play().catch(() => {
       v.muted = true;
       v.play().then(() => setNeedsTap(true)).catch(fail);
     });
-  }, [src, active, fail]);
+  }, [src, fail, videoRef]);
+
   // A dead/expired link, or a connection that never progresses, doesn't fire any event at all: give up and
   // let the caller fall back after a few seconds rather than sit on a black screen forever.
   useEffect(() => {
-    if (!active || ready) return;
+    if (!src || ready) return;
     const t = setTimeout(fail, 9000);
     return () => clearTimeout(t);
-  }, [active, ready, fail, src]);
+  }, [src, ready, fail]);
+
+  // Safari's proprietary AirPlay opt-out attribute — "allow" is already the default, but setting it explicitly
+  // documents intent and survives if that default ever changes. Not in React's HTML attribute typings, so it's
+  // spread in rather than written as a normal JSX prop.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const airplayAttr: any = { "x-webkit-airplay": "allow" };
+
   return (
     <>
       <video
-        ref={ref}
-        src={src}
+        ref={videoRef}
         playsInline
         loop
         controls
+        {...airplayAttr}
         preload="auto"
         onCanPlay={() => setReady(true)}
         onError={fail}
@@ -135,18 +217,18 @@ function NativeVideo({ src, active, onError }: { src: string; active: boolean; o
         }}
         className={`absolute inset-0 h-full w-full bg-black ${cover ? "object-cover" : "object-contain"}`}
       />
-      {active && !ready && (
+      {src && !ready && (
         <div className="pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black text-center text-white">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
           <p className="font-display text-lg">Loading the video…</p>
         </div>
       )}
-      {active && needsTap && (
+      {src && needsTap && (
         <button
           type="button"
           className="btn btn-yellow btn-sm absolute bottom-16 left-1/2 z-[6] -translate-x-1/2"
           onClick={() => {
-            if (ref.current) ref.current.muted = false;
+            if (videoRef.current) videoRef.current.muted = false;
             setNeedsTap(false);
           }}
         >
@@ -157,10 +239,110 @@ function NativeVideo({ src, active, onError }: { src: string; active: boolean; o
   );
 }
 
+/** A hidden, muted, never-played <video> that exists only to get the upcoming native clip's bytes into the
+ *  browser's cache ahead of time — not a second playable element, so there's never a second AirPlay target on
+ *  screen. Keyed by `src` in the caller, so a new upcoming clip just mounts a fresh one. */
+function NativeBufferPreload({ src }: { src: string }) {
+  return <video src={src} muted preload="auto" aria-hidden style={{ display: "none" }} />;
+}
+
 /**
- * One video on the stage. The slot for a video is created once and keeps its iframe for its whole life: the video
- * that is "up next" sits in a slot that is laid out at full size but invisible, loading in the background; when its
+ * Wires up the "Play on TV" button for `EmbedPlayer`'s single persistent native <video> (see
+ * `StageNativeVideo` above — this hook just reads/triggers the same element through the ref `EmbedPlayer`
+ * already holds, so no extra plumbing between the two components is needed).
+ *
+ * Two completely separate AirPlay APIs exist and this picks one path per mount, rather than mixing them:
+ *  - **Remote Playback API** (`video.remote`, Safari 13.1+ and the modern standard): `remote.prompt()` opens
+ *    the system picker; `remote.addEventListener("connect"/"disconnect"/"connecting", ...)` tracks state.
+ *  - **Older WebKit AirPlay API** (iOS Safari only, still the only one on some older versions):
+ *    `video.webkitShowPlaybackTargetPicker()` opens the picker; the `webkitcurrentplaybacktargetiswirelesschanged`
+ *    event plus `video.webkitCurrentPlaybackTargetIsWireless` tracks state.
+ * Neither is in React's typings, so both are read through small `any` casts. Everything here is wrapped so
+ * that any feature-detection surprise just leaves `supported: false` (no button shown) rather than throwing —
+ * normal local playback must never be put at risk by this.
+ */
+function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
+  const [supported, setSupported] = useState(false);
+  const [casting, setCasting] = useState(false);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyV = v as any;
+
+    // Prefer the Remote Playback API when it's actually usable (some browsers expose `remote` but throw on
+    // first touch if the feature is disabled by a permissions policy, so this doesn't just check `"remote" in v`).
+    try {
+      const remote = anyV.remote;
+      if (remote && typeof remote.addEventListener === "function") {
+        const onConnecting = () => setCasting(true);
+        const onConnect = () => setCasting(true);
+        const onDisconnect = () => setCasting(false);
+        remote.addEventListener("connecting", onConnecting);
+        remote.addEventListener("connect", onConnect);
+        remote.addEventListener("disconnect", onDisconnect);
+        setSupported(true);
+        return () => {
+          remote.removeEventListener("connecting", onConnecting);
+          remote.removeEventListener("connect", onConnect);
+          remote.removeEventListener("disconnect", onDisconnect);
+        };
+      }
+    } catch {
+      /* fall through to the WebKit fallback below */
+    }
+
+    // Fallback: the older WebKit-only AirPlay API (no `remote`, but this is still present on it).
+    if (typeof anyV.webkitShowPlaybackTargetPicker === "function") {
+      const onChange = () => setCasting(!!anyV.webkitCurrentPlaybackTargetIsWireless);
+      v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", onChange);
+      onChange(); // pick up a session already in progress (e.g. started from Control Center)
+      setSupported(true);
+      return () => v.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", onChange);
+    }
+
+    setSupported(false);
+  }, [videoRef]);
+
+  // Must run synchronously inside the button's own onClick — not after an `await` — or Safari won't treat it
+  // as triggered by a user gesture and silently ignores it.
+  const trigger = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyV = v as any;
+    try {
+      const remote = anyV.remote;
+      if (remote && typeof remote.prompt === "function") {
+        remote.prompt().catch(() => {
+          try {
+            anyV.webkitShowPlaybackTargetPicker?.();
+          } catch {
+            /* nothing more to try — fail open, normal playback is unaffected either way */
+          }
+        });
+        return;
+      }
+    } catch {
+      /* fall through */
+    }
+    try {
+      anyV.webkitShowPlaybackTargetPicker?.();
+    } catch {
+      /* fail open */
+    }
+  }, [videoRef]);
+
+  return { supported, casting, trigger };
+}
+
+/**
+ * One *iframe* video on the stage (TikTok, YouTube, Facebook, or an Instagram embed with no direct link, or one
+ * that's restricted/gone). The slot is created once and keeps its iframe for its whole life: the video that is
+ * "up next" sits in a slot that is laid out at full size but invisible, loading in the background; when its
  * turn comes the slot is simply switched on (`active`), so it appears instantly and nothing has to reload.
+ * Native videos (uploads, resolved Instagram links) never reach this component — see StageNativeVideo.
  */
 function Slot({
   media,
@@ -177,19 +359,10 @@ function Slot({
   reloadSignal: number;
   onSettled: (embedUrl: string) => void;
 }) {
-  const { embedUrl, platform, sourceUrl, aspect, blocked, directUrl } = media;
+  const { embedUrl, platform, sourceUrl, aspect, blocked } = media;
   const site = SITE[platform] ?? "the site";
   const [forced, setForced] = useState(false); // "try it here anyway"
-  const isUpload = platform === "upload";
-  // A resolved Instagram direct link plays natively too, unless it already failed once at runtime (expired,
-  // or the CDN refused it) — then, if the reel is also known `blocked` (it was only ever resolvable through
-  // the spare account's session, not genuinely embeddable), fall back to the "open it in the app" panel
-  // instead of a dead cross-origin iframe; otherwise the iframe is a legitimate fallback on its own.
-  const [directFailed, setDirectFailed] = useState(false);
-  const useDirect = platform === "instagram" && !!directUrl && !directFailed;
-  const isNative = isUpload || useDirect; // plays in a native <video>, no iframe, no slow-load timers
-  const showBlocked = !!blocked && !forced && !isNative;
-  const nativeSrc = isUpload ? embedUrl : directUrl;
+  const showBlocked = !!blocked && !forced;
   const frameRef = useRef<HTMLIFrameElement>(null);
 
   // A slot that was loaded invisibly keeps its non-autoplaying embed; YouTube is then told to play when shown.
@@ -221,7 +394,7 @@ function Slot({
   }, [reloads]);
   useEffect(() => {
     setSlow(false);
-    if (!active || showBlocked || isNative || loaded) return;
+    if (!active || showBlocked || loaded) return;
     const slowT = setTimeout(() => setSlow(true), 10000);
     const retryT = setTimeout(() => {
       if (!loadedRef.current && reloads === 0) setReloads((n) => n + 1);
@@ -230,7 +403,7 @@ function Slot({
       clearTimeout(slowT);
       clearTimeout(retryT);
     };
-  }, [active, showBlocked, isNative, loaded, reloads]);
+  }, [active, showBlocked, loaded, reloads]);
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => setSettled(true), 1800);
@@ -250,7 +423,7 @@ function Slot({
 
   const layout = useMemo(() => layoutFor(platform, embedUrl, aspect), [platform, embedUrl, aspect]);
   const placed = useMemo(() => (vp.w && vp.h ? place(layout, vp.w, vp.h) : null), [layout, vp.w, vp.h]);
-  const immersive = fullscreen && placed && !showBlocked && !isNative;
+  const immersive = fullscreen && placed && !showBlocked;
 
   return (
     <div
@@ -263,39 +436,10 @@ function Slot({
         pointerEvents: active ? "auto" : "none",
       }}
     >
-      {showBlocked && (
-        <div
-          key="blocked"
-          className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 overflow-y-auto bg-night p-6 text-center text-white ${fullscreen ? "pt-24" : ""}`}
-        >
-          <div className="grid h-20 w-20 place-items-center rounded-full bg-white/10 text-5xl shadow-chunky">📲</div>
-          <h2 className="font-display text-2xl leading-tight sm:text-3xl">
-            {blocked === "gone" ? "This one may be gone" : `This one plays on ${site}`}
-          </h2>
-          <p className="max-w-xs text-sm text-white/70">
-            {blocked === "gone"
-              ? `${site} says this video is removed or private. Open it in the app to check, and play it there if it still works, then come back here for the answers.`
-              : `${site} only lets this video play in its own app. Tap the button to open it there, play it for everyone, then come back here for the answers.`}
-          </p>
-          {sourceUrl && (
-            <button type="button" className="btn btn-yellow touch-manipulation" onClick={() => openInApp(platform, sourceUrl)}>
-              Open in the {site} app ↗
-            </button>
-          )}
-          <div className="flex flex-col items-center gap-1 text-xs text-white/70">
-            {sourceUrl && (
-              <a className="underline hover:text-white/80" href={sourceUrl} target="_blank" rel="noreferrer">
-                Open in the browser instead
-              </a>
-            )}
-            <button type="button" className="underline hover:text-white/80" onClick={() => setForced(true)}>
-              Try playing it here anyway
-            </button>
-          </div>
-        </div>
+      {showBlocked && blocked && (
+        <BlockedPanel platform={platform} blocked={blocked} sourceUrl={sourceUrl} fullscreen={fullscreen} onTryAnyway={() => setForced(true)} />
       )}
-      {isNative && <NativeVideo src={nativeSrc!} active={active} onError={useDirect ? () => setDirectFailed(true) : undefined} />}
-      {!showBlocked && !isNative && (
+      {!showBlocked && (
         <iframe
           ref={frameRef}
           key={reloads}
@@ -324,7 +468,7 @@ function Slot({
           referrerPolicy="strict-origin-when-cross-origin"
         />
       )}
-      {active && !showBlocked && !isNative && !settled && (
+      {active && !showBlocked && !settled && (
         <div className={`absolute inset-0 z-[5] flex flex-col items-center justify-center gap-3 bg-black p-4 text-center text-white ${slow ? "" : "pointer-events-none"}`}>
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-sunny" />
           <p className="font-display text-lg">{slow ? `Still loading from ${site}…` : "Loading the video…"}</p>
@@ -357,10 +501,11 @@ function Slot({
  * native size and cropped + scaled (see lib/immersive.ts) so just the video fills the screen.
  * `overlay` floats over the top as a translucent bar.
  *
- * The stage is one persistent element: videos live in keyed <Slot>s and are never re-parented, so toggling
- * fullscreen doesn't restart anything, and the `next` video (when given) is loaded invisibly behind the current one
- * after it has settled, then switched on the moment the game moves to it.
- * CSS overlay rather than the Fullscreen API alone so it also works on iPhone.
+ * The stage is one persistent element: iframe videos live in keyed <Slot>s that are never re-parented, native
+ * videos (uploads, resolved Instagram links) all share the single <StageNativeVideo> below, and neither is ever
+ * torn down just because `fullscreen` toggles or the game moves to the next video — only `next` (when given) is
+ * loaded invisibly ahead of time (as an iframe, or a hidden buffering native <video>) and switched to the moment
+ * the game gets there. CSS overlay rather than the Fullscreen API alone so it also works on iPhone.
  */
 /** Wrapped in React.memo: its props (the current video, the one warming up next, the overlay) only ever
  *  change on a real poll, not on every tick of the countdown or every unrelated re-render higher up the
@@ -377,6 +522,7 @@ function EmbedPlayer({
   className = "",
   fullscreen = false,
   overlay,
+  pinOverlay = false,
   reloadKey = 0,
 }: {
   embedUrl: string;
@@ -390,7 +536,11 @@ function EmbedPlayer({
   next?: Media | null;
   className?: string;
   fullscreen?: boolean;
-  overlay?: ReactNode;
+  /** called with whether the overlay is currently in its full (true) or auto-hidden, minimal (false) state —
+   *  see the `overlayVisible` effect below */
+  overlay?: (visible: boolean) => ReactNode;
+  /** keep the full overlay up regardless of the idle timer (e.g. a sheet or menu opened from it is still open) */
+  pinOverlay?: boolean;
   /** bump to reload the visible video's iframe (the "Reload video" button) */
   reloadKey?: number;
 }) {
@@ -400,25 +550,53 @@ function EmbedPlayer({
   );
   const site = SITE[platform] ?? "the site";
   const isUpload = platform === "upload";
-  const isNative = isUpload || (platform === "instagram" && !!directUrl);
+
+  // The current clip plays natively unless it's an Instagram link that already failed once at runtime
+  // (expired, or the CDN refused it) — then it falls back to the iframe Slot below (which shows the "open it
+  // in the app" panel instead, if the reel is also known `blocked`). Resets whenever a new clip takes over.
+  const [directFailed, setDirectFailed] = useState(false);
+  useEffect(() => setDirectFailed(false), [embedUrl]);
+  const useDirect = platform === "instagram" && !!directUrl && !directFailed;
+  const isNativeNow = isUpload || useDirect;
+  const nativeSrc = isNativeNow ? (isUpload ? embedUrl : directUrl!) : null;
 
   const [settledUrls, setSettledUrls] = useState<ReadonlySet<string>>(() => new Set());
   const onSettled = useCallback((url: string) => setSettledUrls((s) => (s.has(url) ? s : new Set(s).add(url))), []);
 
   // Preload only once the current video has loaded and painted (so the two never compete for the connection),
-  // and only one video ahead.
-  const ahead = next && next.embedUrl !== embedUrl && canPreload(next) ? next : null;
+  // and only one video ahead — as a native buffer if it's a native candidate, otherwise as an iframe Slot.
+  const ahead = next && next.embedUrl !== embedUrl ? next : null;
+  const aheadNative = !!ahead && isNativeCandidate(ahead);
+  const aheadIframe = !!ahead && !aheadNative && canPreloadIframe(ahead);
   // (plus a short breather after a video takes the screen, so the one on screen has the connection to itself)
   const [warmFor, setWarmFor] = useState<string | null>(null);
   useEffect(() => {
     const t = setTimeout(() => setWarmFor(embedUrl), 2500);
     return () => clearTimeout(t);
   }, [embedUrl]);
-  const preloadNow = !!ahead && warmFor === embedUrl && (isNative || !!blocked || settledUrls.has(embedUrl));
+  const preloadNow = (aheadNative || aheadIframe) && warmFor === embedUrl && (isNativeNow || !!blocked || settledUrls.has(embedUrl));
 
-  const slots: Media[] = ahead && preloadNow ? [current, ahead] : [current];
+  // The current clip only needs an iframe Slot while it isn't playing natively (never for an upload; for
+  // Instagram, until/unless it falls back) — StageNativeVideo covers it otherwise. The "ahead" iframe Slot (if
+  // any) is included independently of that, since the current clip being native doesn't stop the *next* one —
+  // if it's an iframe platform — from needing to warm up in the background.
+  const slots: Media[] = [...(!isNativeNow ? [current] : []), ...(aheadIframe && preloadNow ? [ahead!] : [])];
 
   const vp = useViewport(fullscreen);
+
+  // The one native <video> for the whole stage (see StageNativeVideo) — mounted for as long as EmbedPlayer is,
+  // regardless of `fullscreen` or which video is current, so an AirPlay connection isn't torn down and
+  // re-asked-for every time the game moves between native and non-native clips.
+  const nativeVideoRef = useRef<HTMLVideoElement>(null);
+
+  // "Play on TV": only meaningful while the current clip is actually playing through the native <video> above
+  // (an iframe embed — TikTok/YouTube/Facebook/non-direct Instagram — can't be AirPlayed as a video stream, it
+  // would just mirror the iframe). `casting` naturally flips back to false on disconnect, or stays false if
+  // the next clip isn't native and this effect's listeners don't fire — no extra teardown needed for either
+  // case, playback just continues locally exactly as it did before this feature existed.
+  const airplay = useAirPlay(nativeVideoRef);
+  const showAirplayButton = isNativeNow && airplay.supported;
+  const showCastingPlaceholder = isNativeNow && airplay.casting;
 
   // Whenever a video takes the screen, make sure the page behind it is scrolled to the top. On iPhone/iPad, taps
   // inside a cross-origin iframe get misplaced by however far the page is scrolled underneath, which is why play
@@ -426,6 +604,34 @@ function EmbedPlayer({
   useIsoLayoutEffect(() => {
     if (fullscreen) scrollToTop();
   }, [fullscreen, embedUrl]);
+
+  // Auto-hide the fullscreen overlay (buttons, counts, the gradient behind them) after a few seconds of no
+  // touches, down to just the thin timer bar and a small countdown (see StageView's overlay builder). There's
+  // nothing visually wrong with leaving it all up, but every one of those is a pixel screen mirroring/AirPlay
+  // has to keep re-encoding, so the stage is at its lightest right when the host isn't actually using it. Any
+  // tap on the stage — including a tap on a now-faded button — brings it back; `pinOverlay` (an open sheet or
+  // menu) holds it up regardless of the idle timer.
+  const [overlayVisible, setOverlayVisible] = useState(true);
+  // A counter, not just the boolean: tapping again while the overlay is *already* visible must still push the
+  // 4s clock back out, but setting the same boolean value twice wouldn't re-run an effect keyed on it.
+  const [wakeTick, setWakeTick] = useState(0);
+  const wake = useCallback(() => {
+    setOverlayVisible(true);
+    setWakeTick((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!fullscreen || !overlay) return;
+    wake(); // a fresh video (or entering fullscreen) always starts with the full overlay up
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen, overlay, embedUrl]);
+  useEffect(() => {
+    if (!fullscreen || !overlay || pinOverlay) return;
+    const t = setTimeout(() => setOverlayVisible(false), 4000);
+    return () => clearTimeout(t);
+  }, [fullscreen, overlay, pinOverlay, wakeTick]);
+  useEffect(() => {
+    if (pinOverlay) setOverlayVisible(true); // whatever opened (sheet/menu) should never appear already-fading
+  }, [pinOverlay]);
 
   // lock page scroll / rubber-banding behind the stage
   useEffect(() => {
@@ -464,29 +670,86 @@ function EmbedPlayer({
     <div
       className={fullscreen ? "fixed inset-0 z-50 overflow-hidden bg-black" : `flex flex-col items-center ${className}`}
       style={fullscreen ? { animation: "otb-stage-in 220ms ease-out", touchAction: "manipulation" } : undefined}
+      onPointerDown={fullscreen && overlay ? wake : undefined}
     >
       <div
         key="frame"
         className={fullscreen ? "absolute inset-0 bg-black" : "relative overflow-hidden rounded-3xl border-8 border-night bg-black shadow-chunky"}
         style={fullscreen ? undefined : { height: "min(72vh, 760px)", aspectRatio: "9 / 16" }}
       >
-        {/* one keyed list: when the game moves on, the invisible slot becomes the visible one without remounting */}
-        {slots.map((m, i) => (
-          <Slot key={m.embedUrl} media={m} active={i === 0} fullscreen={fullscreen} vp={vp} reloadSignal={reloadKey} onSettled={onSettled} />
+        {/* one keyed list: when the game moves on, the invisible slot becomes the visible one without remounting.
+            `active` is keyed by matching embedUrl, not array position — when the current clip is native, only
+            an "ahead" iframe Slot (if any) is in this list at all, and it must stay marked inactive/preloading. */}
+        {slots.map((m) => (
+          <Slot key={m.embedUrl} media={m} active={m.embedUrl === embedUrl} fullscreen={fullscreen} vp={vp} reloadSignal={reloadKey} onSettled={onSettled} />
         ))}
+
+        {/* The moment an Instagram direct link fails at runtime, `directFailed` flips `isNativeNow` false above,
+            this wrapper hides, and the iframe Slot (re-added to `slots`) takes over — showing the blocked panel
+            itself if the reel is also known restricted/gone, exactly as if it had never resolved a direct link
+            at all. So this wrapper never needs its own copy of that fallback. */}
+        <div
+          aria-hidden={!isNativeNow}
+          className="absolute inset-0 overflow-hidden bg-black"
+          style={{ zIndex: isNativeNow ? 2 : 0, opacity: isNativeNow ? 1 : 0, pointerEvents: isNativeNow ? "auto" : "none" }}
+        >
+          <StageNativeVideo videoRef={nativeVideoRef} src={nativeSrc} onError={useDirect ? () => setDirectFailed(true) : undefined} />
+
+          {/* While AirPlay is actually streaming the file to the TV, the phone doesn't need to keep
+              decoding and redrawing the same frames locally — swap the video's visible area for a plain
+              placeholder (the <video> element itself, and everything else on screen, is untouched: it keeps
+              playing, the overlay/controls/Answer sheet all stay exactly as usable as before). */}
+          {showCastingPlaceholder && (
+            <div className="pointer-events-none absolute inset-0 z-[6] flex flex-col items-center justify-center gap-2 bg-night text-center text-white">
+              <p className="text-5xl">📺</p>
+              <p className="font-display text-xl">Playing on your TV</p>
+              <p className="max-w-[16rem] text-sm text-white/70">Streaming straight to the Apple TV over AirPlay.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Not shown, not played — just gets the upcoming native clip's bytes warm in the browser's cache. */}
+        {aheadNative && preloadNow && <NativeBufferPreload key={ahead!.embedUrl} src={(ahead!.directUrl ?? ahead!.embedUrl)!} />}
       </div>
 
       {fullscreen && overlay && (
         <div
           key="bar"
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-6"
+          className={`pointer-events-none absolute inset-x-0 top-0 z-10 pb-6 ${overlayVisible ? "bg-gradient-to-b from-black/80 via-black/40 to-transparent" : ""}`}
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
-          <div className="pointer-events-auto">{overlay}</div>
+          <div className="pointer-events-auto">{overlay(overlayVisible)}</div>
         </div>
       )}
 
-      {sourceUrl && !fullscreen && !blocked && !isNative && (
+      {/* "Play on TV": deliberately NOT threaded through the `overlay` prop above — StageView doesn't need to
+          know anything about AirPlay, EmbedPlayer already owns the native <video> and its ref. Lives in its
+          own corner of the stage so it never competes for space with StageView's buttons row, but fades with
+          the same `overlayVisible` idle timer so it doesn't sit there as one more static thing to re-encode
+          while the host isn't touching the screen. Tapping it again while already casting reopens the same
+          system picker, which is where iOS puts the "Stop Mirroring"/disconnect option — no separate
+          disconnect code path is needed here. */}
+      {fullscreen && showAirplayButton && (
+        <div
+          className={`pointer-events-none absolute bottom-0 right-0 z-[8] pb-4 pr-4 transition-opacity duration-200 ${
+            overlayVisible ? "opacity-100" : "opacity-0"
+          }`}
+          style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+        >
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm pointer-events-auto"
+            tabIndex={overlayVisible ? undefined : -1}
+            aria-hidden={!overlayVisible}
+            aria-label={airplay.casting ? "Stop playing on TV" : "Play on TV"}
+            onClick={airplay.trigger}
+          >
+            <span aria-hidden>📺</span> {airplay.casting ? "On TV" : "Play on TV"}
+          </button>
+        </div>
+      )}
+
+      {sourceUrl && !fullscreen && !blocked && !isNativeNow && (
         <a key="link" href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 text-sm text-white/70 underline hover:text-white/80">
           Not loading? Open on {site} ↗
         </a>

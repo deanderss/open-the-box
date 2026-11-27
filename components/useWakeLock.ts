@@ -10,9 +10,10 @@ interface NavigatorWithWakeLock {
 
 /**
  * Keeps the screen awake while `active` is true (phone controller while the game's running, host screen
- * until it's finished). Browsers release the lock whenever the tab goes into the background, so we
- * re-request it the moment the tab becomes visible again if we're still supposed to be holding it. Quietly
- * does nothing on browsers without the API (notably iOS Safari, as of this writing).
+ * until it's finished) — important for AirPlay/mirroring, where the phone dimming or auto-locking cuts the
+ * session. Browsers release the lock whenever the tab goes into the background, so we re-request it the
+ * moment the tab becomes visible again if we're still supposed to be holding it. Quietly does nothing on
+ * browsers without the API (iOS Safari added support in 16.4; older versions just skip it).
  */
 export function useWakeLock(active: boolean) {
   const lock = useRef<WakeLockSentinelLike | null>(null);
