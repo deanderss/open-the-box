@@ -22,6 +22,13 @@ function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
   const sessionId = useSearchParams().get("session");
   const { state, error, refresh, fetchedAt, reconnecting, applyState } = useGameState({ sessionId }, 2000);
+  // GrandReveal's chunk (plus framer-motion/confetti/sfx) would otherwise only start downloading the first
+  // time a reveal actually happens — right when the host most wants it to show up instantly. This is the
+  // exact dynamic import `GrandReveal` (below) itself uses, so by the time that one actually runs it just
+  // resolves from the already-fetched/cached chunk instead of starting a fresh network request.
+  useEffect(() => {
+    import("@/components/GrandReveal");
+  }, []);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [reloadN, setReloadN] = useState(0); // bumped to remount the video iframe ("Reload video")

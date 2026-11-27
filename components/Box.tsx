@@ -8,12 +8,18 @@ import { unlockAudio } from "@/lib/sfx";
 export default function Box({
   size = 280,
   count,
+  onOpening,
   onOpened,
   disabled,
   label = "Click to open!",
 }: {
   size?: number;
   count?: number;
+  /** Fired synchronously the instant a real tap opens the box, before any animation — the one moment a
+   *  caller is guaranteed a user gesture, and ~1.4s before `onOpened` actually runs. A caller with real work
+   *  to do (starting a session, say) can kick it off here and just await its own already-in-flight result in
+   *  `onOpened`, so that work happens *alongside* the lid animation instead of only after it finishes. */
+  onOpening?: () => void;
   /** May reject (e.g. the start-session request failed) — the lid animates back shut and the box becomes
    *  clickable again instead of being left looking permanently "stuck open" with no way to retry. */
   onOpened?: () => void | Promise<void>;
@@ -31,6 +37,7 @@ export default function Box({
     // router navigation, not a fresh document), so the AudioContext unlocked here is still the one the first
     // video's eventual reveal will use.
     unlockAudio();
+    onOpening?.();
     setOpening(true);
     await body.start({ rotate: [0, -6, 6, -8, 8, -4, 0], transition: { duration: 0.7 } });
     fireConfetti({ particleCount: 160, spread: 90, startVelocity: 45, origin: { y: 0.55 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });

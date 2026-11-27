@@ -1,15 +1,23 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Box from "@/components/Box";
-import { postJson } from "@/lib/clientFetch";
+import { postJson, type PostJsonResult } from "@/lib/clientFetch";
 
 type InProgress = { sessionId: string; paused: boolean; videoNumber: number; total: number } | null;
 
 export default function OpenBoxButton({ groupId, count, inProgress }: { groupId: string; count: number; inProgress?: InProgress }) {
   const router = useRouter();
   const [err, setErr] = useState<string | null>(null);
+  // Warmed as soon as this button could possibly be clicked, not after — so the host's play page's own JS
+  // doesn't start downloading only once the box's ~1.4s opening animation has already finished playing.
+  useEffect(() => {
+    router.prefetch(`/g/${groupId}/play`);
+  }, [router, groupId]);
+  // Set the instant the lid starts opening (see Box's `onOpening`) and awaited once the animation finishes
+  // (`onOpened`), so starting the session happens *during* the animation instead of only after it.
+  const starting = useRef<Promise<PostJsonResult<{ sessionId: string }>> | null>(null);
   return (
     <div className="flex flex-col items-center py-6">
       {inProgress && (
@@ -35,9 +43,13 @@ export default function OpenBoxButton({ groupId, count, inProgress }: { groupId:
               ? "The box is empty. Share the link to collect videos!"
               : "Click the box to open it!"
         }
+        onOpening={() => {
+          starting.current = postJson<{ sessionId: string }>("/api/session/start", { groupId });
+        }}
         onOpened={async () => {
           setErr(null);
-          const r = await postJson<{ sessionId: string }>("/api/session/start", { groupId });
+          const r = await (starting.current ?? postJson<{ sessionId: string }>("/api/session/start", { groupId }));
+          starting.current = null;
           if (!r.ok) {
             setErr(r.error);
             throw new Error(r.error); // let Box know it failed so it can re-close the lid and retry
