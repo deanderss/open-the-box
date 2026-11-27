@@ -28,6 +28,12 @@ function useViewport(active: boolean) {
 
 const SITE: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", facebook: "Facebook" };
 
+// TEMPORARILY DISABLED (2026-11-26, by request): the "Play on TV" native-cast button is being revisited — for
+// now every clip just relies on the host's normal iOS screen mirroring, same as before this feature existed.
+// Flip back to `true` to re-enable; `useAirPlay` and all the readiness/casting plumbing below are left in
+// place untouched so turning it back on is a one-line change, not a re-implementation.
+const AIRPLAY_FEATURE_ENABLED = false;
+
 type Media = {
   embedUrl: string;
   platform: string;
@@ -654,10 +660,10 @@ function EmbedPlayer({
   // (isNativeNow flips true) a render before the <video>'s `src` is actually assigned, so a tap landing in
   // that gap used to silently no-op. There's no equivalent readiness gate needed for the iframe/mirroring
   // button below — it never touches the video element at all.
-  const showNativeCastButton = isNativeNow && airplay.supported && airplay.ready;
-  const showMirrorButton = !isNativeNow && !blocked && airplay.supported;
+  const showNativeCastButton = AIRPLAY_FEATURE_ENABLED && isNativeNow && airplay.supported && airplay.ready;
+  const showMirrorButton = AIRPLAY_FEATURE_ENABLED && !isNativeNow && !blocked && airplay.supported;
   const showAirplayButton = showNativeCastButton || showMirrorButton;
-  const showCastingPlaceholder = isNativeNow && airplay.casting;
+  const showCastingPlaceholder = AIRPLAY_FEATURE_ENABLED && isNativeNow && airplay.casting;
   const [showMirrorTip, setShowMirrorTip] = useState(false);
   useEffect(() => setShowMirrorTip(false), [embedUrl]);
 
