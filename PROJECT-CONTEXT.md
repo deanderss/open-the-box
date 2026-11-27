@@ -551,3 +551,21 @@ A full review in four phases, each shipped separately: A game experience, B secu
   - The room-code box has autocorrect and spellcheck turned off.
 
 **Verified:** `tsc`, `next build`; browser preview of sideways awards and reveal, the timer bar under a forced reduce-motion rule, and the "⋯" press/click behaviour. **Not verified on real devices:** iOS audio session and interrupted-resume, wake lock through awards, phone sleep and wake mid-game.
+
+### Phase B: security
+- **Moderator database reads** (migration 1400, applied): the `authenticated` role can no longer read `responses`, `session_players` (device tokens), or `videos.submitted_by` / `direct_url` / `direct_url_expires`. Instead `videos` has a column grant for its public columns. TRUNCATE/TRIGGER/REFERENCES were also dropped from `authenticated`. The leaderboard and top pages read those tables with the service role after their RLS-checked `groups` read; counts use `select("id")`.
+- **Instagram link source:** `videos.direct_url_source` (`anonymous` | `session`). Non-admin games only reuse an `anonymous` saved link. Older links with no source use the old playability rule until they expire.
+- **Rate limits:** the state-poll device key and the join per-code key now include the IP, so someone replaying a public player/session id or room code only uses up their own budget. Realtime nudges trigger a refetch at most once a second, since anyone with the anon key can send on the channel.
+- **Skip:** advances first and only deletes the video's answers if its own guarded advance won (`advanceTo` in `lib/game.ts`), then broadcasts. A stale skip can no longer wipe an already-scored video.
+- **Smaller fixes:**
+  - exact email match when adding a co-moderator
+  - the host view is refused for suspended moderators
+  - `finale.topVideo` removed (unused)
+  - answers must guess someone on the box's roster
+  - generic error text instead of raw database errors (answer, start, create box)
+  - keepalive refuses without `CRON_SECRET` (it is set in production)
+  - `frame-ancestors 'none'` and `nosniff` headers
+  - box colours must be `#RRGGBB`
+  - upload bucket limit 25 MB (migration 1500, applied)
+
+**Verified:** `tsc`, `next build`. As the moderator role in SQL: responses, device tokens, senders and direct links are denied, while the pages' own reads (groups, players, video counts, sessions) still work. With the anon key: all of those are denied. Local dev: finale state builds, both headers are sent, keepalive without auth returns 401. **Not verified live:** Skip and answer changes in a real game.

@@ -6,8 +6,10 @@ export const POST = handle(async (req, { params }) => {
   await requireGroupMod(params.id);
   const { email } = await body<{ email?: string }>(req);
   const e = (email || "").trim().toLowerCase();
+  if (!e) throw new HttpError(400, "Enter their email");
   const db = supabaseAdmin();
-  const { data: mod } = await db.from("moderators").select("id").ilike("email", e).maybeSingle();
+  // Exact match (emails are stored lowercase): `ilike` would treat % and _ as wildcards and match other people.
+  const { data: mod } = await db.from("moderators").select("id").eq("email", e).maybeSingle();
   if (!mod) throw new HttpError(404, "No moderator account with that email — they need to sign up first");
   await db.from("group_moderators").upsert({ group_id: params.id, moderator_id: mod.id, role: "co" }, { onConflict: "group_id,moderator_id", ignoreDuplicates: true });
   return json({ ok: true });

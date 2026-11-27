@@ -22,7 +22,10 @@ export const POST = handle(async (req) => {
     const code = roomCode();
     const { data, error } = await db.from("sessions").insert({ group_id: groupId, room_code: code, created_by: uid }).select("id").single();
     if (!error && data) return json({ sessionId: data.id, code });
-    if (error && error.code !== "23505") throw new HttpError(500, error.message);
+    if (error && error.code !== "23505") {
+      console.error("create session failed", error);
+      throw new HttpError(500, "Could not start a game. Please try again.");
+    }
   }
   throw new HttpError(500, "Could not allocate a room code");
 });

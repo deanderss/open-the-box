@@ -15,7 +15,7 @@ export default async function GroupsPage() {
   const counts = new Map<string, number>(
     await Promise.all(
       (groups || []).map(async (g) => {
-        const { count } = await sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
+        const { count } = await sb.from("videos").select("id", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
         return [g.id as string, count ?? 0] as const;
       })
     )

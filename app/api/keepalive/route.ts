@@ -5,7 +5,8 @@ import { endStaleSessions } from "@/lib/game";
 export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
-  if (secret && req.headers.get("authorization") !== `Bearer ${secret}`) return json({ error: "unauthorized" }, 401);
+  // No secret configured means nobody can be checked, so refuse rather than letting anyone trigger the sweeps.
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return json({ error: "unauthorized" }, 401);
   const { data, error } = await supabaseAdmin().rpc("ping");
   // Best-effort daily housekeeping, piggybacked on the cron that's already pinging the DB once a day to keep
   // the free-plan project from being paused for inactivity — each failing independently of the others and of

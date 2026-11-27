@@ -173,11 +173,12 @@ export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Pr
  * Instagram reel with embedding off, a removed video, ...) is still shown, and the host screen replaces the black
  * frame with an "open it in the app" panel (see `video.blocked` in buildState).
  */
-async function showVideoAt(s: SessionRow, index: number) {
+/** The guarded move to video `index` (or to the end of the game), without telling anyone. Returns the new row,
+ *  or null when someone else already moved on. */
+async function advanceTo(s: SessionRow, index: number): Promise<SessionRow | null> {
   // Guarded on the exact index (and that the game hasn't ended) we expect to be moving on FROM: a double
   // "next"/"skip" tap, or two moderators pressing it at once, means two requests both compute `index` from
-  // the same stale `s` — only the first one's write can match, so the second becomes a harmless no-op that
-  // just reports back whatever the first one already did, instead of skipping an extra video.
+  // the same stale `s` — only the first one's write can match, so the second becomes a harmless no-op.
   if (index >= s.video_order.length) {
     const { data } = await db()
       .from("sessions")
@@ -187,9 +188,7 @@ async function showVideoAt(s: SessionRow, index: number) {
       .is("ended_at", null)
       .select("*")
       .maybeSingle();
-    if (!data) return (await getSession(s.id))!;
-    await broadcast(s.id);
-    return data as SessionRow;
+    return (data as SessionRow) ?? null;
   }
   const vid = s.video_order[index];
   const { data } = await db()
@@ -200,12 +199,18 @@ async function showVideoAt(s: SessionRow, index: number) {
     .is("ended_at", null)
     .select("*")
     .maybeSingle();
-  if (!data) return (await getSession(s.id))!; // someone else already moved on; report the current truth
+  if (!data) return null;
   // Only mark the video played once we know the session actually advanced — otherwise a failed/raced
   // update could leave a video flagged "played" without ever having been shown.
   await db().from("videos").update({ status: "played", played_at: new Date().toISOString() }).eq("id", vid);
-  await broadcast(s.id);
   return data as SessionRow;
+}
+
+async function showVideoAt(s: SessionRow, index: number) {
+  const row = await advanceTo(s, index);
+  if (!row) return (await getSession(s.id))!; // someone else already moved on; report the current truth
+  await broadcast(s.id);
+  return row;
 }
 
 export async function beginSession(s: SessionRow) {
@@ -234,11 +239,17 @@ export async function nextVideo(s: SessionRow) {
 export async function skipVideo(s: SessionRow) {
   const vid = currentVideoId(s);
   if (!vid || (s.state !== "playing" && s.state !== "reveal")) return { error: "Nothing to skip" };
+  // Move on first, and only throw the answers away if this request is the one that moved on: a stale skip
+  // (a double tap, or a second moderator pressing it just after "Next") would otherwise wipe the answers of a
+  // video that was already scored. Everyone is told only after the answers are gone, so no screen (or the
+  // final scores) ever counts them.
+  const row = await advanceTo(s, s.current_index + 1);
+  if (!row) return { session: (await getSession(s.id))! };
   await db().from("responses").delete().eq("session_id", s.id).eq("video_id", vid);
   await db().from("videos").update({ status: "skipped", avg_rating: null, rating_count: 0 }).eq("id", vid);
-  const session = await showVideoAt(s, s.current_index + 1);
+  await broadcast(s.id);
   maybePurgeUpload(vid); // a skipped personal video is never shown again, so its file goes too
-  return { session };
+  return { session: row };
 }
 
 /** Freeze the game so the moderator can leave and come back later. */
@@ -353,6 +364,7 @@ type VideoRow = {
   aspect?: number | null;
   direct_url?: string | null;
   direct_url_expires?: string | null;
+  direct_url_source?: "anonymous" | "session" | null;
 };
 
 /**
@@ -379,11 +391,13 @@ async function mediaInfo(v: VideoRow, igSession = false): Promise<{ aspect?: num
   if (v.platform === "instagram") {
     const expires = v.direct_url_expires ? new Date(v.direct_url_expires).getTime() : 0;
     const knownDeadEnd = (v.playability === "restricted" || v.playability === "gone") && !(igSession && hasSessionId());
-    // A saved link may have come from the spare account (those never mark playability "ok"), so only the admin
-    // host reuses it; everyone else only reuses a link that is known to be anonymously playable.
-    if (v.direct_url && expires > Date.now() && (igSession || v.playability === "ok")) {
+    // A link made with the admin's Instagram session is only for the admin's games; everyone else reuses only
+    // a link made anonymously. (A reel can be "ok" yet have its latest link come from the session, if the
+    // anonymous path stopped working when the link was refreshed.) Links saved before the source was recorded
+    // fall back to the old rule (playability "ok"); they expire within a day.
+    const anonLink = v.direct_url_source ? v.direct_url_source === "anonymous" : v.playability === "ok";
+    if (v.direct_url && expires > Date.now() && (igSession || anonLink)) {
       out.directUrl = v.direct_url;
-      // A cached link doesn't tell us which path it came from; fall through and trust the saved playability.
     } else if (knownDeadEnd) {
       // Already confirmed restricted/gone on a previous poll, and there's no spare-account session configured
       // to try instead — asking Instagram again can only ever fail the exact same way it did last time, so
@@ -400,6 +414,7 @@ async function mediaInfo(v: VideoRow, igSession = false): Promise<{ aspect?: num
             .update({
               direct_url: direct.url,
               direct_url_expires: new Date(direct.expiresAt).toISOString(),
+              direct_url_source: direct.source,
               ...(knownOk ? { playability: "ok" } : {}),
             })
             .eq("id", v.id);
@@ -464,8 +479,8 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
           .in("id", relevantIds)
       : Promise.resolve({ data: [] as VideoRow[], error: null }),
     directIds.length
-      ? db().from("videos").select("id,direct_url,direct_url_expires").in("id", directIds)
-      : Promise.resolve({ data: [] as Pick<VideoRow, "id" | "direct_url" | "direct_url_expires">[], error: null }),
+      ? db().from("videos").select("id,direct_url,direct_url_expires,direct_url_source").in("id", directIds)
+      : Promise.resolve({ data: [] as Pick<VideoRow, "id" | "direct_url" | "direct_url_expires" | "direct_url_source">[], error: null }),
   ]);
   if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error || directRes.error) throw new HttpError(503, DB_DOWN);
   const group = groupRes.data;
@@ -475,7 +490,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   const vidsMap = new Map(((vidsRes.data as VideoRow[]) || []).map((v) => [v.id, v]));
   (directRes.data || []).forEach((r) => {
     const row = vidsMap.get(r.id as string);
-    if (row) Object.assign(row, { direct_url: r.direct_url, direct_url_expires: r.direct_url_expires });
+    if (row) Object.assign(row, { direct_url: r.direct_url, direct_url_expires: r.direct_url_expires, direct_url_source: r.direct_url_source });
   });
 
   const joinedIds = new Set((sp || []).map((r) => r.player_id as string));
@@ -610,20 +625,6 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       finale = cached.v;
     } else {
       const shown = s.video_order.slice(0, Math.max(0, s.current_index + 1));
-      let topVideo = null;
-      if (shown.length) {
-        const { data: tv } = await db()
-          .from("videos")
-          .select("id,platform,embed_url,source_url,avg_rating,rating_count,submitted_by")
-          .in("id", shown)
-          .eq("status", "played")
-          .neq("platform", "upload") // personal videos are deleted after they play
-          .not("avg_rating", "is", null)
-          .order("avg_rating", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (tv) topVideo = { ...tv, senderName: nameOf(tv.submitted_by as string) };
-      }
       const { data: allTime } = await db()
         .from("group_leaderboard")
         .select("player_id,display_name,avatar_color,correct,guesses,submitted,points")
@@ -658,7 +659,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
           colorOf,
         });
       }
-      finale = { topVideo, allTime: allTime || [], remaining: remaining ?? 0, awards };
+      finale = { allTime: allTime || [], remaining: remaining ?? 0, awards };
       finaleCache.set(s.id, { v: finale, until: Date.now() + 60_000 });
     }
   }

@@ -12,7 +12,8 @@ export const POST = handle(async (req) => {
   // every device in the room out for the rest of the hour. Key the generous budget by room code instead (a
   // bounded set — only one session can own a code), and keep a much looser per-IP ceiling only as a backstop
   // against one device hammering many different rooms.
-  if (code && !rateLimit(`join:code:${code.toUpperCase()}`, 500, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
+  // The code budget is also keyed by IP, so a stranger hammering a room's code can't lock its real players out.
+  if (code && !rateLimit(`join:code:${code.toUpperCase()}:${ip}`, 500, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
   if (!rateLimit(`join:ip:${ip}`, 1500, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
   const s = code ? await getSessionByCode(code) : null;
   if (!s || s.state === "finished") {

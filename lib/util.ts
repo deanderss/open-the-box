@@ -10,6 +10,9 @@ export function roomCode() {
   return Array.from(b, (x) => CODE_ALPHABET[x % CODE_ALPHABET.length]).join("");
 }
 
+/** A box colour: "#RRGGBB" only, since it ends up in inline styles. */
+export const isHexColor = (c: unknown): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
+
 export const AVATAR_COLORS = ["#FF4FA3", "#FFD23F", "#3DDC97", "#FF8A3D", "#3FC1FF", "#B07CFF", "#FF5E5E", "#7CF5FF", "#C6FF4F", "#FFA8E0"];
 
 export function shuffle<T>(arr: T[]): T[] {

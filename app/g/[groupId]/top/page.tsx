@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { getMe } from "@/lib/me";
+import { supabaseAdmin } from "@/lib/supabase-server";
 import TopList from "./TopList";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,9 @@ export default async function TopPage({ params }: { params: { groupId: string } 
   const { sb, mod } = await getMe();
   const { data: group } = await sb.from("groups").select("id,name,emoji,color").eq("id", params.groupId).maybeSingle();
   if (!group) notFound();
-  const { data: vids } = await sb
+  // Senders (`submitted_by`) aren't readable with a moderator's own login (see migration 1400); this box's
+  // moderator was just confirmed by the row-level-secured `groups` read above, so read them with the service role.
+  const { data: vids } = await supabaseAdmin()
     .from("videos")
     .select("id,platform,source_url,embed_url,avg_rating,rating_count,played_at,submitted_by")
     .eq("group_id", group.id)

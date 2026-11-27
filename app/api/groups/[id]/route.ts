@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
-import { json } from "@/lib/util";
+import { json, isHexColor } from "@/lib/util";
 import { purgeGroupUploads } from "@/lib/uploads";
 
 export const PATCH = handle(async (req, { params }) => {
@@ -8,7 +8,10 @@ export const PATCH = handle(async (req, { params }) => {
   const { name, color, emoji } = await body<{ name?: string; color?: string; emoji?: string }>(req);
   const patch: Record<string, string> = {};
   if (name?.trim()) patch.name = name.trim().slice(0, 60);
-  if (color) patch.color = color;
+  if (color !== undefined) {
+    if (!isHexColor(color)) throw new HttpError(400, "Pick a colour from the list");
+    patch.color = color;
+  }
   if (emoji) patch.emoji = emoji.slice(0, 8);
   await supabaseAdmin().from("groups").update(patch).eq("id", params.id);
   return json({ ok: true });

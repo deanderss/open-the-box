@@ -16,7 +16,9 @@ export const GET = handle(async (req) => {
 
   // One generous budget per device — a player's phone, or the host screen's own session — plus a looser
   // per-IP ceiling so a room full of phones on one Wi-Fi network never trips a single shared limit.
-  const deviceKey = playerId ? `state:p:${playerId}` : sessionId ? `state:s:${sessionId}` : `state:ip:${ip}`;
+  // The player and session ids aren't secrets (every phone in the room sees them), so the device budget is also
+  // keyed by IP: someone else replaying your id can only use up their own budget, never yours.
+  const deviceKey = playerId ? `state:p:${playerId}:${ip}` : sessionId ? `state:s:${sessionId}:${ip}` : `state:ip:${ip}`;
   if (!rateLimit(deviceKey, 6000, 60 * 60 * 1000)) throw new HttpError(429, "Slow down");
   if (!rateLimit(`state:ipcap:${ip}`, 60000, 60 * 60 * 1000)) throw new HttpError(429, "Slow down");
 

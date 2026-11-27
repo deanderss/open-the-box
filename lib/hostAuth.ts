@@ -1,4 +1,4 @@
-import { currentUserId, isGroupMod, isAdmin } from "./supabase-server";
+import { currentUserId, isGroupMod, supabaseAdmin } from "./supabase-server";
 
 /**
  * The host screen's `sessionId` is handed to every phone on join (it's how they subscribe to the realtime
@@ -41,9 +41,13 @@ export async function isHostAuthorized(sessionId: string, groupId: string, req: 
   try {
     const uid = await currentUserId();
     if (uid) {
-      const [role, adm] = await Promise.all([isGroupMod(uid, groupId), isAdmin(uid)]);
-      ok = !!role;
-      admin = ok && adm;
+      const [role, { data: mod }] = await Promise.all([
+        isGroupMod(uid, groupId),
+        supabaseAdmin().from("moderators").select("is_admin,suspended").eq("id", uid).maybeSingle(),
+      ]);
+      // A suspended moderator's login stays valid for up to an hour; they don't get the host view meanwhile.
+      ok = !!role && !mod?.suspended;
+      admin = ok && !!mod?.is_admin;
     }
   } catch {
     ok = false;

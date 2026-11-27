@@ -45,7 +45,6 @@ export type GameState = {
   /** `correct` right guesses + `bonus` half-points for videos they sent = `points` */
   scores: { playerId: string; name: string; color: string; correct: number; bonus: number; points: number }[];
   finale: {
-    topVideo: { id: string; platform: string; embed_url: string; source_url: string; avg_rating: number; rating_count: number; senderName: string } | null;
     allTime: { player_id: string; display_name: string; avatar_color: string; correct: number; guesses: number; submitted: number; points: number }[];
     /** videos still waiting in the box for the next game */
     remaining: number;
@@ -216,7 +215,11 @@ export function useGameState(
     // already coalesces a nudge that arrives mid-fetch. The 0-300ms jitter spreads out the exact moment
     // every connected phone refetches at once right after a broadcast — otherwise every device in the room
     // would hit `/api/session/state` in the same instant.
+    // Anyone with the public key can send on this channel, so nudges are also spaced at least a second apart:
+    // a flood of fake ones can't turn every phone in the room into a refetch loop. A real nudge is at most
+    // a second late in the worst case, and still arrives well before the next regular poll.
     let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastNudgeAt = 0;
     import("@/lib/supabase-browser").then(({ supabaseBrowser }) => {
       if (cancelled) return;
       const sb = supabaseBrowser();
@@ -224,10 +227,12 @@ export function useGameState(
         .channel(`session-${sid}`)
         .on("broadcast", { event: "update" }, () => {
           if (nudgeTimer) return; // already about to refetch — this one would just see the same data
+          const wait = Math.max(Math.random() * 300, lastNudgeAt + 1000 - Date.now());
           nudgeTimer = setTimeout(() => {
             nudgeTimer = null;
+            lastNudgeAt = Date.now();
             refresh().then(schedule);
-          }, Math.random() * 300);
+          }, wait);
         })
         .subscribe((status: string) => {
           channelSubscribed.current = status === "SUBSCRIBED";

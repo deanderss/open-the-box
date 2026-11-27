@@ -18,8 +18,8 @@ export default async function GroupLobby({ params }: { params: { groupId: string
 
   const [{ data: players }, { count: queued }, { count: played }, { data: gm }, { data: active }] = await Promise.all([
     sb.from("players").select("id,display_name,avatar_color").eq("group_id", group.id).eq("active", true).order("display_name"),
-    sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "queued"),
-    sb.from("videos").select("*", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "played"),
+    sb.from("videos").select("id", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "queued"),
+    sb.from("videos").select("id", { count: "exact", head: true }).eq("group_id", group.id).eq("status", "played"),
     sb.from("group_moderators").select("moderator_id,role").eq("group_id", group.id),
     // An unfinished game (paused or just left open) that can be resumed
     sb.from("sessions").select("id,state,current_index,video_order,paused_at").eq("group_id", group.id).is("ended_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle(),

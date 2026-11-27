@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Avatar from "@/components/Avatar";
 import { getMe } from "@/lib/me";
+import { supabaseAdmin } from "@/lib/supabase-server";
 import { fmtPoints, SENDER_BONUS } from "@/lib/points";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,10 @@ export default async function LeaderboardPage({ params, searchParams }: { params
   const { sb, mod } = await getMe();
   const { data: group } = await sb.from("groups").select("id,name,emoji").eq("id", params.groupId).maybeSingle();
   if (!group) notFound();
+  // Past this point the moderator is confirmed to be one of this box's moderators (the row-level-secured
+  // `groups` read above). Guesses and senders aren't readable with a moderator's own login (see migration
+  // 1400), so the score tallies read them with the service role, always scoped to this box.
+  const adb = supabaseAdmin();
   const view = searchParams.view === "last" ? "last" : "all";
 
   const { data: players } = await sb.from("players").select("id,display_name,avatar_color,active").eq("group_id", group.id);
@@ -21,7 +26,7 @@ export default async function LeaderboardPage({ params, searchParams }: { params
   let lastLabel = "";
 
   if (view === "all") {
-    const { data } = await sb.from("group_leaderboard").select("*").eq("group_id", group.id);
+    const { data } = await adb.from("group_leaderboard").select("*").eq("group_id", group.id);
     rows = (data || [])
       .filter((r) => r.guesses > 0 || Number(r.submitted) > 0 || pm.get(r.player_id)?.active)
       .map((r) => ({
@@ -51,7 +56,7 @@ export default async function LeaderboardPage({ params, searchParams }: { params
         agg.set(id, row);
         return row;
       };
-      const { data: resps } = await sb.from("responses").select("player_id,is_correct").eq("session_id", last.id).eq("is_decoy", false);
+      const { data: resps } = await adb.from("responses").select("player_id,is_correct").eq("session_id", last.id).eq("is_decoy", false);
       (resps || []).forEach((r) => {
         const row = rowFor(r.player_id);
         row.guesses++;
@@ -61,8 +66,8 @@ export default async function LeaderboardPage({ params, searchParams }: { params
       const shown = (last.video_order as string[]).slice(0, last.state === "playing" ? last.current_index : last.current_index + 1);
       if (shown.length) {
         const [{ data: sent }, { data: joined }] = await Promise.all([
-          sb.from("videos").select("submitted_by").in("id", shown).eq("status", "played"),
-          sb.from("session_players").select("player_id").eq("session_id", last.id),
+          adb.from("videos").select("submitted_by").in("id", shown).eq("group_id", group.id).eq("status", "played"),
+          adb.from("session_players").select("player_id").eq("session_id", last.id),
         ]);
         const inGame = new Set((joined || []).map((j) => j.player_id as string));
         (sent || []).forEach((v) => {
