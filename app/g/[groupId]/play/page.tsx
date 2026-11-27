@@ -21,7 +21,9 @@ const GrandReveal = dynamic(() => import("@/components/GrandReveal"), { ssr: fal
 function HostInner({ groupId }: { groupId: string }) {
   const router = useRouter();
   const sessionId = useSearchParams().get("session");
-  const { state, error, refresh, fetchedAt, reconnecting, applyState } = useGameState({ sessionId }, 2000);
+  // Widens to a 5s poll once the realtime broadcast channel is confirmed live (a nudge gets here faster
+  // anyway) and drops straight back to 2s the instant it isn't — see useGameState's own comment.
+  const { state, error, refresh, fetchedAt, reconnecting, applyState } = useGameState({ sessionId }, 2000, 5000);
   // GrandReveal's chunk (plus framer-motion/confetti/sfx) would otherwise only start downloading the first
   // time a reveal actually happens — right when the host most wants it to show up instantly. This is the
   // exact dynamic import `GrandReveal` (below) itself uses, so by the time that one actually runs it just

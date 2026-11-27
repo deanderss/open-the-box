@@ -156,7 +156,9 @@ function Controller({
   submitAnswer: (rating: number | null, guessId: string | null) => Promise<SeatResult>;
   onKicked: () => void;
 }) {
-  const { state, refresh, fetchedAt, reconnecting } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000);
+  // Widens to an 8s poll once the realtime broadcast channel is confirmed live (a nudge gets here faster
+  // anyway) and drops straight back to 2s the instant it isn't — see useGameState's own comment.
+  const { state, refresh, fetchedAt, reconnecting } = useGameState({ code, playerId: seat.playerId, token: seat.token }, 2000, 8000);
   const [rating, setRating] = useState<number | null>(null);
   const [guess, setGuess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

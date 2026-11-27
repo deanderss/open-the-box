@@ -50,8 +50,20 @@ function sameExceptTimers(a: GameState | null, b: GameState): boolean {
   return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
 }
 
-/** Polls the state endpoint and refetches instantly on realtime nudges. */
-export function useGameState(params: { code?: string | null; sessionId?: string | null; playerId?: string | null; token?: string | null }, pollMs = 2500) {
+/**
+ * Polls the state endpoint and refetches instantly on realtime nudges.
+ *
+ * `widePollMs` (defaults to `pollMs`, i.e. no widening) is the interval used instead of `pollMs` whenever the
+ * realtime broadcast channel is confirmed `SUBSCRIBED` — a nudge gets there faster than the next poll would
+ * fire anyway, so the regular poll only needs to be a safety net while the channel is actually live. The
+ * moment the channel errors, times out, or closes, polling drops straight back to `pollMs` — no game state
+ * is ever allowed to depend on realtime alone.
+ */
+export function useGameState(
+  params: { code?: string | null; sessionId?: string | null; playerId?: string | null; token?: string | null },
+  pollMs = 2500,
+  widePollMs = pollMs
+) {
   const [state, setState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState(Date.now());
@@ -62,6 +74,7 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
   const lastRaw = useRef<GameState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveState = useRef<GameState["session"]["state"] | undefined>(undefined);
+  const channelSubscribed = useRef(false);
   // A poll already in flight when the component unmounts (e.g. "Pause & exit", or a kicked phone navigating
   // away) finishes after the unmount's cleanup has already cleared the timer — its own `.then(schedule)`
   // would otherwise start a brand new timer that nothing is left to clear, so the old loop just keeps polling
@@ -122,13 +135,13 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
     if (!mounted.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
     if (liveState.current === "finished") return;
-    const ms = liveState.current === "lobby" ? Math.max(pollMs, 4000) : pollMs;
+    const ms = liveState.current === "lobby" ? Math.max(pollMs, 4000) : channelSubscribed.current ? widePollMs : pollMs;
     timer.current = setTimeout(async () => {
       if (!mounted.current) return;
       await refresh();
       schedule();
     }, ms);
-  }, [pollMs, refresh]);
+  }, [pollMs, widePollMs, refresh]);
 
   useEffect(() => {
     mounted.current = true;
@@ -155,14 +168,36 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
     if (!sid) return;
     let cancelled = false;
     let cleanup: (() => void) | null = null;
+    // A burst of nudges (e.g. Skip, which deletes responses *and* advances the video — two broadcasts a few
+    // ms apart) only needs to trigger one refetch, not one per message; coalesced the same way `dirty`
+    // already coalesces a nudge that arrives mid-fetch. The 0-300ms jitter spreads out the exact moment
+    // every connected phone refetches at once right after a broadcast — otherwise every device in the room
+    // would hit `/api/session/state` in the same instant.
+    let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
     import("@/lib/supabase-browser").then(({ supabaseBrowser }) => {
       if (cancelled) return;
       const sb = supabaseBrowser();
       const ch = sb
         .channel(`session-${sid}`)
-        .on("broadcast", { event: "update" }, () => refresh().then(schedule))
-        .subscribe();
-      cleanup = () => sb.removeChannel(ch);
+        .on("broadcast", { event: "update" }, () => {
+          if (nudgeTimer) return; // already about to refetch — this one would just see the same data
+          nudgeTimer = setTimeout(() => {
+            nudgeTimer = null;
+            refresh().then(schedule);
+          }, Math.random() * 300);
+        })
+        .subscribe((status: string) => {
+          channelSubscribed.current = status === "SUBSCRIBED";
+          // React immediately either way: drop back to fast polling the instant the channel stops being
+          // reliable, and only start trusting it (widening the poll) once it's actually confirmed live —
+          // never assume realtime is working, the poll is always the fallback that actually ships state.
+          schedule();
+        });
+      cleanup = () => {
+        if (nudgeTimer) clearTimeout(nudgeTimer);
+        channelSubscribed.current = false;
+        sb.removeChannel(ch);
+      };
     });
     return () => {
       cancelled = true;
