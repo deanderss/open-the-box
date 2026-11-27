@@ -24,12 +24,17 @@ const db = () => supabaseAdmin();
 
 // The answer window rarely changes mid-game, but buildState reads it on every single poll (every host and
 // phone, every 2s). Caching it per server instance for a minute avoids paying for that round trip every time.
+// 300s matches the actual default in app_settings (supabase/migrations/20250101000300_pause_and_limits.sql) —
+// this fallback only matters when the read below fails, and a wrong value that's too SHORT would auto-reveal
+// a video (and lock out any late answers) well before the timer on screen says time's up.
+const DEFAULT_WINDOW_SECONDS = 300;
 let windowCache: { v: number; until: number } | null = null;
 export async function getWindowSeconds() {
   const now = Date.now();
   if (windowCache && windowCache.until > now) return windowCache.v;
-  const { data } = await db().from("app_settings").select("answer_window_seconds").eq("id", 1).single();
-  const v = (data?.answer_window_seconds as number) ?? 150;
+  const { data, error } = await db().from("app_settings").select("answer_window_seconds").eq("id", 1).single();
+  if (error || data == null) return DEFAULT_WINDOW_SECONDS; // don't cache a failure — retry on the very next poll
+  const v = (data.answer_window_seconds as number) ?? DEFAULT_WINDOW_SECONDS;
   windowCache = { v, until: now + 60_000 };
   return v;
 }

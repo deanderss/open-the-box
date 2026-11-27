@@ -81,10 +81,14 @@ CRON_SECRET=$CRON_SECRET
 EOF
 log "API keys saved locally (.env.local, not uploaded)."
 echo "$REF" > .supabase-ref
-log "Configuring login settings…"
-AUTH_BODY=$(node -e "process.stdout.write(JSON.stringify({site_url:'https://open-the-box.vercel.app',uri_allow_list:'https://*.vercel.app/**,http://localhost:3000/**',mailer_autoconfirm:true,disable_signup:true}))")
+# Signup/mailer flags only, for now — the redirect allow-list itself is set further down, once the real
+# production domain is known (see "Locking down login redirect settings" below). Setting it here used to mean
+# guessing the domain before it existed, which is how it ended up pinned to the wrong one *and* wide open to
+# every "*.vercel.app" preview deployment (a password-reset email's redirect can be pointed at an attacker's
+# own Vercel app with that wildcard in place — the one-time code then lands on their site, not yours).
+AUTH_BODY=$(node -e "process.stdout.write(JSON.stringify({mailer_autoconfirm:true,disable_signup:true}))")
 AUTH_RES=$(sb -X PATCH "$API/projects/$REF/config/auth" -d "$AUTH_BODY")
-echo "$AUTH_RES" | grep -q '"site_url"' && log "Auth configured." || { echo "WARN auth config:"; echo "$AUTH_RES" | head -c 300; echo; }
+echo "$AUTH_RES" | grep -q '"mailer_autoconfirm"' && log "Auth configured." || { echo "WARN auth config:"; echo "$AUTH_RES" | head -c 300; echo; }
 log "SUPABASE PHASE DONE ✅"
 fi
 
@@ -125,5 +129,19 @@ curl -sS -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: app
   "https://api.vercel.com/v9/projects/$PROJ_ID$TQ" -d '{"ssoProtection":null}' >/dev/null || true
 
 echo "$SITE" > .live-url
+
+# Now that the real production domain is known, lock the auth redirect allow-list down to exactly that — not
+# the "https://*.vercel.app/**" wildcard this used to carry, which let anyone's own Vercel app receive a
+# password-reset/magic-link redirect for any account here. No localhost entry either: that only matters for
+# local dev, which can add it back by hand if ever needed, and it has no business in the production config.
+[ -z "${REF:-}" ] && REF=$(cat .supabase-ref 2>/dev/null || true)
+if [ -n "${REF:-}" ]; then
+  log "Locking login redirects to $SITE…"
+  AUTH_BODY=$(node -e "process.stdout.write(JSON.stringify({site_url:process.argv[1],uri_allow_list:process.argv[1]+'/**'}))" "$SITE")
+  AUTH_RES=$(sb -X PATCH "$API/projects/$REF/config/auth" -d "$AUTH_BODY")
+  echo "$AUTH_RES" | grep -q '"site_url"' && log "Auth redirects locked to $SITE." || { echo "WARN auth config:"; echo "$AUTH_RES" | head -c 300; echo; }
+else
+  log "WARN: no Supabase project ref found (.supabase-ref missing and SB_REF unset) — skipping auth redirect lock-down."
+fi
 log "DONE ✅  $SITE"
 fi

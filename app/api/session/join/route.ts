@@ -5,9 +5,15 @@ import { getSessionByCode, broadcast } from "@/lib/game";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
 
 export const POST = handle(async (req) => {
-  if (!rateLimit("join:" + clientIp(req), 60, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries");
   const { code, playerId, token } = await body<{ code?: string; playerId?: string; token?: string }>(req);
   const ip = clientIp(req);
+  // A whole room's phones (plus the moderator's own play-along panel, which re-verifies its seat on every
+  // remount) share one Wi-Fi network and one room code — a flat per-IP limit used to let one busy game lock
+  // every device in the room out for the rest of the hour. Key the generous budget by room code instead (a
+  // bounded set — only one session can own a code), and keep a much looser per-IP ceiling only as a backstop
+  // against one device hammering many different rooms.
+  if (code && !rateLimit(`join:code:${code.toUpperCase()}`, 500, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
+  if (!rateLimit(`join:ip:${ip}`, 1500, 60 * 60 * 1000)) throw new HttpError(429, "Too many tries — wait a bit and try again");
   const s = code ? await getSessionByCode(code) : null;
   if (!s || s.state === "finished") {
     // A wrong/mistyped code is expected now and then, but repeated misses look like someone guessing codes.

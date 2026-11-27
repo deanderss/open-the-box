@@ -156,6 +156,15 @@ function StageNativeVideo({
     firedRef.current = true;
     onError?.();
   }, [onError]);
+  // `onError` (and so `fail`) gets a brand new identity on every parent re-render — the caller passes an
+  // inline arrow — but the play effect below must only ever restart playback when `src` itself changes, not
+  // whenever some unrelated prop higher up causes a re-render. Reading `fail` through a ref instead of as a
+  // dependency keeps the latest version callable without that effect re-running (and replaying/un-muting the
+  // video from the top) on every re-render — this was causing the native stage to stutter.
+  const failRef = useRef(fail);
+  useEffect(() => {
+    failRef.current = fail;
+  }, [fail]);
 
   useEffect(() => {
     firedRef.current = false;
@@ -177,17 +186,18 @@ function StageNativeVideo({
     v.muted = false;
     v.play().catch(() => {
       v.muted = true;
-      v.play().then(() => setNeedsTap(true)).catch(fail);
+      v.play().then(() => setNeedsTap(true)).catch(() => failRef.current());
     });
-  }, [src, fail, videoRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, videoRef]);
 
   // A dead/expired link, or a connection that never progresses, doesn't fire any event at all: give up and
   // let the caller fall back after a few seconds rather than sit on a black screen forever.
   useEffect(() => {
     if (!src || ready) return;
-    const t = setTimeout(fail, 9000);
+    const t = setTimeout(() => failRef.current(), 9000);
     return () => clearTimeout(t);
-  }, [src, ready, fail]);
+  }, [src, ready]);
 
   // Safari's proprietary AirPlay opt-out attribute — "allow" is already the default, but setting it explicitly
   // documents intent and survives if that default ever changes. Not in React's HTML attribute typings, so it's
@@ -559,6 +569,7 @@ function EmbedPlayer({
   const useDirect = platform === "instagram" && !!directUrl && !directFailed;
   const isNativeNow = isUpload || useDirect;
   const nativeSrc = isNativeNow ? (isUpload ? embedUrl : directUrl!) : null;
+  const onDirectError = useCallback(() => setDirectFailed(true), []);
 
   const [settledUrls, setSettledUrls] = useState<ReadonlySet<string>>(() => new Set());
   const onSettled = useCallback((url: string) => setSettledUrls((s) => (s.has(url) ? s : new Set(s).add(url))), []);
@@ -619,16 +630,21 @@ function EmbedPlayer({
     setOverlayVisible(true);
     setWakeTick((n) => n + 1);
   }, []);
+  // Depend on `!!overlay`, not `overlay` itself: StageView passes an inline render-prop function whose
+  // identity changes on every real state change (a lock-in, a "busy" toggle, a menu open) even when nothing
+  // about the overlay's presence actually changed — keying on the function's identity re-armed this effect
+  // (and so brought the full overlay back) on every one of those, defeating the auto-hide almost entirely.
+  const hasOverlay = !!overlay;
   useEffect(() => {
-    if (!fullscreen || !overlay) return;
+    if (!fullscreen || !hasOverlay) return;
     wake(); // a fresh video (or entering fullscreen) always starts with the full overlay up
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fullscreen, overlay, embedUrl]);
+  }, [fullscreen, hasOverlay, embedUrl]);
   useEffect(() => {
-    if (!fullscreen || !overlay || pinOverlay) return;
+    if (!fullscreen || !hasOverlay || pinOverlay) return;
     const t = setTimeout(() => setOverlayVisible(false), 4000);
     return () => clearTimeout(t);
-  }, [fullscreen, overlay, pinOverlay, wakeTick]);
+  }, [fullscreen, hasOverlay, pinOverlay, wakeTick]);
   useEffect(() => {
     if (pinOverlay) setOverlayVisible(true); // whatever opened (sheet/menu) should never appear already-fading
   }, [pinOverlay]);
@@ -693,7 +709,7 @@ function EmbedPlayer({
           className="absolute inset-0 overflow-hidden bg-black"
           style={{ zIndex: isNativeNow ? 2 : 0, opacity: isNativeNow ? 1 : 0, pointerEvents: isNativeNow ? "auto" : "none" }}
         >
-          <StageNativeVideo videoRef={nativeVideoRef} src={nativeSrc} onError={useDirect ? () => setDirectFailed(true) : undefined} />
+          <StageNativeVideo videoRef={nativeVideoRef} src={nativeSrc} onError={useDirect ? onDirectError : undefined} />
 
           {/* While AirPlay is actually streaming the file to the TV, the phone doesn't need to keep
               decoding and redrawing the same frames locally — swap the video's visible area for a plain

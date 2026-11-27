@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { useGameState } from "@/components/useGameState";
 import { useWakeLock } from "@/components/useWakeLock";
 import { enterNativeFullscreen, exitNativeFullscreen, scrollToTop } from "@/lib/fullscreen";
+import { unlockAudio } from "@/lib/sfx";
 import HostHeader from "@/components/host/HostHeader";
 import LobbyView from "@/components/host/LobbyView";
 import PausedView from "@/components/host/PausedView";
@@ -79,6 +80,12 @@ function HostInner({ groupId }: { groupId: string }) {
 
   /** Returns whether the action actually succeeded, so callers (e.g. "pause & exit") can decide what to do next. */
   async function act(action: string, extra: Record<string, string> = {}): Promise<boolean> {
+    // Every call here starts synchronously from a real tap (every caller is a button onClick), which is
+    // iOS Safari's only window to create/resume an AudioContext — by the time the grand reveal actually wants
+    // to play its fanfare a few seconds later (sometimes with no tap at all, when the timer just runs out),
+    // that window has long closed and the reveal would otherwise be silent on an iPhone host. Keeping the
+    // context already running across every Next/Reveal/etc. tap covers the untapped auto-reveal case too.
+    unlockAudio();
     // Starting a video is the moderator's "play": go fullscreen right inside this click
     // (browsers only allow it during a user gesture, so it has to happen before any await).
     if (action === "begin" || action === "next" || (action === "resume" && s?.state === "playing")) {

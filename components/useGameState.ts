@@ -63,6 +63,11 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
   const lastRaw = useRef<GameState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveState = useRef<GameState["session"]["state"] | undefined>(undefined);
+  // A poll already in flight when the component unmounts (e.g. "Pause & exit", or a kicked phone navigating
+  // away) finishes after the unmount's cleanup has already cleared the timer — its own `.then(schedule)`
+  // would otherwise start a brand new timer that nothing is left to clear, so the old loop just keeps polling
+  // every tick forever with stale credentials. Checked before every refresh and before every re-schedule.
+  const mounted = useRef(true);
   const { code, sessionId, playerId, token } = params;
 
   const refresh = useCallback(async () => {
@@ -115,16 +120,19 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
+    if (!mounted.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
     if (liveState.current === "finished") return;
     const ms = liveState.current === "lobby" ? Math.max(pollMs, 4000) : pollMs;
     timer.current = setTimeout(async () => {
+      if (!mounted.current) return;
       await refresh();
       schedule();
     }, ms);
   }, [pollMs, refresh]);
 
   useEffect(() => {
+    mounted.current = true;
     refresh().then(schedule);
     const onVisible = () => {
       if (typeof document !== "undefined" && !document.hidden) refresh();
@@ -132,6 +140,7 @@ export function useGameState(params: { code?: string | null; sessionId?: string 
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      mounted.current = false;
       if (timer.current) clearTimeout(timer.current);
       document.removeEventListener("visibilitychange", onVisible);
     };

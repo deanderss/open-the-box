@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Avatar from "@/components/Avatar";
 import LiveCountdown from "@/components/LiveCountdown";
@@ -59,6 +59,130 @@ export default function StageView({
     setAnswerOpen(false);
   }, [s.index, s.state]);
 
+  // Skip deletes every answer already locked in for this video — fine as an "it won't load, move on" escape
+  // hatch, risky as a slip of the thumb right next to Reveal now. Only interrupt with a confirm when there's
+  // actually something to lose.
+  const handleSkip = useCallback(() => {
+    if (state.answered > 0 && typeof window !== "undefined") {
+      const noun = state.answered === 1 ? "person has" : "people have";
+      if (!window.confirm(`Skip this video? ${state.answered} ${noun} already answered — those answers will be lost.`)) return;
+    }
+    act("skip");
+  }, [act, state.answered]);
+
+  // StageView re-renders on every real state change (a lock-in, busy toggling, the menu opening), and an
+  // inline `overlay={(visible) => ...}` prop would get a brand new identity every single one of those —
+  // defeating EmbedPlayer's React.memo and forcing it to fully re-render even though nothing it actually
+  // cares about changed. useCallback keeps the same function identity across renders where none of these
+  // specific inputs changed.
+  const renderOverlay = useCallback(
+    (visible: boolean) => (
+      <div className="text-white">
+        <TimerBar remainingMs={s.remainingMs} fetchedAt={fetchedAt} totalSeconds={s.windowSeconds} active={s.state === "playing"} />
+        {/* The timer bar and this small countdown stay up for the whole video — everything else here
+            (the "locked in" count and the action buttons) fades out after a few seconds of no touches,
+            and back in on a tap (see EmbedPlayer's `overlayVisible`), so there's less for screen
+            mirroring/AirPlay to keep re-encoding while nobody's actually looking at the controls. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
+          <div className="flex items-center gap-3 drop-shadow">
+            <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={40} />
+            {visible && (
+              <span className="font-display text-base">
+                <span className="text-mint">{state.answered}</span>
+                <span className="text-white/70"> / {state.eligible} locked in</span>
+              </span>
+            )}
+          </div>
+          <div
+            className={`flex flex-wrap items-center justify-end gap-1.5 transition-opacity duration-200 ${visible ? "opacity-100" : "pointer-events-none opacity-0"}`}
+            aria-hidden={!visible}
+          >
+            <button className="btn btn-pink btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} onClick={() => act("reveal")}>
+              Reveal now
+            </button>
+            {answerStatus.visible && (
+              <button className="btn btn-yellow btn-sm" tabIndex={visible ? undefined : -1} onClick={() => setAnswerOpen(true)}>
+                📝 Answer
+              </button>
+            )}
+            {/* Skip / Reload / Pause: full buttons from sm up, folded into "More" below that so the
+                bar doesn't wrap onto three lines on a phone. */}
+            <div className="hidden items-center gap-1.5 sm:flex">
+              <button className="btn btn-ghost btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Video won't load? Skip it." onClick={handleSkip}>
+                Skip <span aria-hidden>⏭</span>
+              </button>
+              <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Video stuck or black? Reload it (the timer keeps running)." aria-label="Reload video" onClick={() => setReloadN((n) => n + 1)}>
+                <span aria-hidden>↻</span>
+              </button>
+              <button className="btn btn-sky btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
+                <span aria-hidden>⏸</span>
+              </button>
+            </div>
+            <div className="relative sm:hidden">
+              <button
+                className="btn btn-ghost btn-sm"
+                tabIndex={visible ? undefined : -1}
+                aria-haspopup="true"
+                aria-expanded={moreOpen}
+                aria-label="More actions"
+                onClick={() => setMoreOpen((o) => !o)}
+              >
+                <span aria-hidden>⋯</span> More
+              </button>
+              {moreOpen && (
+                <div className="absolute right-0 top-full z-20 mt-1 flex flex-col gap-1 rounded-xl bg-night p-2 shadow-chunky">
+                  <button
+                    className="btn btn-ghost btn-sm whitespace-nowrap"
+                    disabled={busy}
+                    onClick={() => {
+                      setMoreOpen(false);
+                      handleSkip();
+                    }}
+                  >
+                    Skip <span aria-hidden>⏭</span>
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm whitespace-nowrap"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      setReloadN((n) => n + 1);
+                    }}
+                  >
+                    <span aria-hidden>↻</span> Reload
+                  </button>
+                  <button
+                    className="btn btn-sky btn-sm whitespace-nowrap"
+                    disabled={busy}
+                    onClick={() => {
+                      setMoreOpen(false);
+                      onPauseExit();
+                    }}
+                  >
+                    <span aria-hidden>⏸</span> Pause
+                  </button>
+                </div>
+              )}
+            </div>
+            <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Back to the window view" onClick={() => setWantFull(false)}>
+              <span aria-hidden>⤡</span> Exit
+            </button>
+          </div>
+        </div>
+      </div>
+    ),
+    [s.remainingMs, fetchedAt, s.windowSeconds, s.state, state.answered, state.eligible, busy, answerStatus.visible, moreOpen, act, handleSkip, setReloadN, onPauseExit, setWantFull]
+  );
+
+  // `state.upNext` is a freshly-parsed object on every poll response even when nothing about it actually
+  // changed, which would otherwise give EmbedPlayer's `next` prop a new identity every ~2s and help defeat
+  // its memo() the same way the inline overlay did. Only produce a new reference when the fields EmbedPlayer
+  // actually reads from it change.
+  const upNextKeyParts = state.upNext
+    ? [state.upNext.embedUrl, state.upNext.directUrl ?? "", state.upNext.blocked ?? "", state.upNext.aspect ?? ""]
+    : null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const nextMedia = useMemo(() => state.upNext, upNextKeyParts ? [upNextKeyParts.join("|")] : [null]);
+
   if (!state.video) return null;
   return (
     <section className="grid flex-1 gap-6 px-6 pb-8 lg:grid-cols-[1fr_minmax(340px,420px)]">
@@ -71,103 +195,10 @@ export default function StageView({
           aspect={state.video.aspect}
           blocked={state.video.blocked}
           directUrl={state.video.directUrl}
-          next={state.upNext}
+          next={nextMedia}
           fullscreen={fullscreen}
           pinOverlay={answerOpen || moreOpen}
-          overlay={(visible) => (
-            <div className="text-white">
-              <TimerBar remainingMs={s.remainingMs} fetchedAt={fetchedAt} totalSeconds={s.windowSeconds} active={s.state === "playing"} />
-              {/* The timer bar and this small countdown stay up for the whole video — everything else here
-                  (the "locked in" count and the action buttons) fades out after a few seconds of no touches,
-                  and back in on a tap (see EmbedPlayer's `overlayVisible`), so there's less for screen
-                  mirroring/AirPlay to keep re-encoding while nobody's actually looking at the controls. */}
-              <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
-                <div className="flex items-center gap-3 drop-shadow">
-                  <LiveCountdown remainingMs={s.remainingMs} fetchedAt={fetchedAt} total={s.windowSeconds} active={s.state === "playing"} size={40} />
-                  {visible && (
-                    <span className="font-display text-base">
-                      <span className="text-mint">{state.answered}</span>
-                      <span className="text-white/70"> / {state.eligible} locked in</span>
-                    </span>
-                  )}
-                </div>
-                <div
-                  className={`flex flex-wrap items-center justify-end gap-1.5 transition-opacity duration-200 ${visible ? "opacity-100" : "pointer-events-none opacity-0"}`}
-                  aria-hidden={!visible}
-                >
-                  <button className="btn btn-pink btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} onClick={() => act("reveal")}>
-                    Reveal now
-                  </button>
-                  {answerStatus.visible && (
-                    <button className="btn btn-yellow btn-sm" tabIndex={visible ? undefined : -1} onClick={() => setAnswerOpen(true)}>
-                      📝 Answer
-                    </button>
-                  )}
-                  {/* Skip / Reload / Pause: full buttons from sm up, folded into "More" below that so the
-                      bar doesn't wrap onto three lines on a phone. */}
-                  <div className="hidden items-center gap-1.5 sm:flex">
-                    <button className="btn btn-ghost btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Video won't load? Skip it." onClick={() => act("skip")}>
-                      Skip <span aria-hidden>⏭</span>
-                    </button>
-                    <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Video stuck or black? Reload it (the timer keeps running)." aria-label="Reload video" onClick={() => setReloadN((n) => n + 1)}>
-                      <span aria-hidden>↻</span>
-                    </button>
-                    <button className="btn btn-sky btn-sm" disabled={busy} tabIndex={visible ? undefined : -1} title="Freeze the game and leave" aria-label="Pause and exit" onClick={onPauseExit}>
-                      <span aria-hidden>⏸</span>
-                    </button>
-                  </div>
-                  <div className="relative sm:hidden">
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      tabIndex={visible ? undefined : -1}
-                      aria-haspopup="true"
-                      aria-expanded={moreOpen}
-                      aria-label="More actions"
-                      onClick={() => setMoreOpen((o) => !o)}
-                    >
-                      <span aria-hidden>⋯</span> More
-                    </button>
-                    {moreOpen && (
-                      <div className="absolute right-0 top-full z-20 mt-1 flex flex-col gap-1 rounded-xl bg-night p-2 shadow-chunky">
-                        <button
-                          className="btn btn-ghost btn-sm whitespace-nowrap"
-                          disabled={busy}
-                          onClick={() => {
-                            setMoreOpen(false);
-                            act("skip");
-                          }}
-                        >
-                          Skip <span aria-hidden>⏭</span>
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-sm whitespace-nowrap"
-                          onClick={() => {
-                            setMoreOpen(false);
-                            setReloadN((n) => n + 1);
-                          }}
-                        >
-                          <span aria-hidden>↻</span> Reload
-                        </button>
-                        <button
-                          className="btn btn-sky btn-sm whitespace-nowrap"
-                          disabled={busy}
-                          onClick={() => {
-                            setMoreOpen(false);
-                            onPauseExit();
-                          }}
-                        >
-                          <span aria-hidden>⏸</span> Pause
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <button className="btn btn-ghost btn-sm" tabIndex={visible ? undefined : -1} title="Back to the window view" onClick={() => setWantFull(false)}>
-                    <span aria-hidden>⤡</span> Exit
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          overlay={renderOverlay}
         />
         {s.state === "playing" && !fullscreen && (
           <div className="flex gap-2">
@@ -244,7 +275,7 @@ export default function StageView({
             <button className="btn btn-pink flex-1" disabled={busy} onClick={() => act("reveal")}>
               Reveal now
             </button>
-            <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={() => act("skip")}>
+            <button className="btn btn-ghost" disabled={busy} title="Video won't load? Skip it." onClick={handleSkip}>
               Skip ⏭
             </button>
           </div>

@@ -35,6 +35,17 @@ function audio(): AudioContext | null {
   }
 }
 
+/**
+ * iOS Safari only lets an `AudioContext` actually start making sound if it was created (or resumed) from
+ * directly inside a real tap's event handler — by the time the reveal fires a few seconds after the host
+ * last touched anything, that window has closed, and the fanfare/drumroll above would otherwise just silently
+ * do nothing. Call this synchronously from the host's own taps (Start, Next, Reveal now) so the context is
+ * already running well before the reveal needs it.
+ */
+export function unlockAudio() {
+  audio();
+}
+
 function thump(c: AudioContext, when: number, gain: number) {
   const o = c.createOscillator();
   const g = c.createGain();
@@ -102,8 +113,8 @@ export function playFanfare() {
 
 export function stopSfx() {
   timers.splice(0).forEach(clearTimeout);
-  if (ctx) {
-    void ctx.close().catch(() => {});
-    ctx = null;
-  }
+  // Suspend, don't close: closing destroys the context permanently, so the very next reveal would need a
+  // brand new one created outside of any tap's gesture — right back to the iOS silence problem `unlockAudio`
+  // exists to avoid. Suspending just pauses it; `audio()` resumes the same (already-unlocked) context.
+  if (ctx) void ctx.suspend().catch(() => {});
 }

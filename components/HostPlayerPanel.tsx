@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Avatar from "./Avatar";
 import { useSeat } from "./useSeat";
 import type { GameState } from "./useGameState";
@@ -28,10 +28,20 @@ export default function HostPlayerPanel({ state, onStatus }: { state: GameState;
     onStatus({ visible: !!seat && checked && state.session.state === "playing" && !isAnswered, answered: isAnswered });
   }, [onStatus, seat, checked, locked, state.players, state.session.state]);
 
-  // If the moderator's seat gets freed up server-side (e.g. kicked from the lobby), drop it here too.
+  // If the moderator's seat gets freed up server-side (e.g. kicked from the lobby), drop it here too. But
+  // `pick()` resolves before the *next* poll has run, so `state.players` can still be one poll stale and not
+  // list the seat yet — that used to make this fire immediately after picking a name, every time, leaving a
+  // phantom seat on the server with nobody holding its token (every round then stalls waiting for them to
+  // answer). Only start watching for "no longer listed" once this seat has actually been seen at least once.
+  const everSeen = useRef(false);
+  useEffect(() => {
+    everSeen.current = false;
+  }, [seat?.playerId]);
   useEffect(() => {
     if (!seat || !checked) return;
-    if (!state.players.some((p) => p.id === seat.playerId)) clear();
+    const present = state.players.some((p) => p.id === seat.playerId);
+    if (present) everSeen.current = true;
+    else if (everSeen.current) clear();
   }, [state.players, seat, checked, clear]);
 
   // Fresh choices for every new video.

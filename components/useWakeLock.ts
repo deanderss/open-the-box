@@ -3,6 +3,8 @@ import { useEffect, useRef } from "react";
 
 interface WakeLockSentinelLike {
   release: () => Promise<void>;
+  addEventListener: (type: "release", listener: () => void) => void;
+  removeEventListener: (type: "release", listener: () => void) => void;
 }
 interface NavigatorWithWakeLock {
   wakeLock: { request: (type: "screen") => Promise<WakeLockSentinelLike> };
@@ -23,6 +25,14 @@ export function useWakeLock(active: boolean) {
     let cancelled = false;
     const nav = navigator as unknown as NavigatorWithWakeLock;
 
+    const onReleased = () => {
+      // The OS/browser itself releases the lock for reasons that aren't just "we gave it up" — some devices
+      // drop it on any trip to Control Center/the app switcher, not only when the tab is actually hidden. The
+      // visibilitychange re-request below only fires if it ever notices the lock is gone; this keeps the ref
+      // itself in sync with reality so that check actually has something to notice.
+      lock.current = null;
+    };
+
     async function request() {
       try {
         const l = await nav.wakeLock.request("screen");
@@ -30,6 +40,7 @@ export function useWakeLock(active: boolean) {
           l.release().catch(() => {});
           return;
         }
+        l.addEventListener("release", onReleased);
         lock.current = l;
       } catch {
         /* denied, unsupported right now, or page not visible yet — harmless to just skip */
@@ -44,6 +55,7 @@ export function useWakeLock(active: boolean) {
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
+      lock.current?.removeEventListener("release", onReleased);
       lock.current?.release().catch(() => {});
       lock.current = null;
     };

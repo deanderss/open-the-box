@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Box from "@/components/Box";
+import { postJson } from "@/lib/clientFetch";
 
 type InProgress = { sessionId: string; paused: boolean; videoNumber: number; total: number } | null;
 
@@ -35,10 +36,13 @@ export default function OpenBoxButton({ groupId, count, inProgress }: { groupId:
               : "Click the box to open it!"
         }
         onOpened={async () => {
-          const res = await fetch("/api/session/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groupId }) });
-          const d = await res.json();
-          if (!res.ok) return setErr(d.error);
-          router.push(`/g/${groupId}/play?session=${d.sessionId}`);
+          setErr(null);
+          const r = await postJson<{ sessionId: string }>("/api/session/start", { groupId });
+          if (!r.ok) {
+            setErr(r.error);
+            throw new Error(r.error); // let Box know it failed so it can re-close the lid and retry
+          }
+          router.push(`/g/${groupId}/play?session=${r.data.sessionId}`);
         }}
       />
       {err && <p className="mt-3 text-[#FFB3B3]">{err}</p>}

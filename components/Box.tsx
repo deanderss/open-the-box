@@ -2,6 +2,7 @@
 import { motion, useAnimationControls } from "framer-motion";
 import { useState } from "react";
 import { fireConfetti } from "@/lib/confetti";
+import { unlockAudio } from "@/lib/sfx";
 
 /** Cartoony cardboard box. Click to pop the lid. */
 export default function Box({
@@ -13,7 +14,9 @@ export default function Box({
 }: {
   size?: number;
   count?: number;
-  onOpened?: () => void;
+  /** May reject (e.g. the start-session request failed) — the lid animates back shut and the box becomes
+   *  clickable again instead of being left looking permanently "stuck open" with no way to retry. */
+  onOpened?: () => void | Promise<void>;
   disabled?: boolean;
   label?: string;
 }) {
@@ -23,11 +26,21 @@ export default function Box({
 
   async function open() {
     if (opening || disabled) return;
+    // Right inside the tap, same reason as the host screen's own taps (see lib/sfx.ts `unlockAudio`) — this
+    // click starts the game and carries straight into the host's play page in the same page load (a client
+    // router navigation, not a fresh document), so the AudioContext unlocked here is still the one the first
+    // video's eventual reveal will use.
+    unlockAudio();
     setOpening(true);
     await body.start({ rotate: [0, -6, 6, -8, 8, -4, 0], transition: { duration: 0.7 } });
     fireConfetti({ particleCount: 160, spread: 90, startVelocity: 45, origin: { y: 0.55 }, colors: ["#FF4FA3", "#FFD23F", "#3DDC97", "#3FC1FF", "#FF8A3D"] });
     await lid.start({ y: -size * 0.9, rotate: -35, x: -size * 0.25, opacity: 0, transition: { duration: 0.7, ease: "easeOut" } });
-    onOpened?.();
+    try {
+      await onOpened?.();
+    } catch {
+      await lid.start({ y: 0, rotate: 0, x: 0, opacity: 1, transition: { duration: 0.3 } });
+      setOpening(false);
+    }
   }
 
   return (
