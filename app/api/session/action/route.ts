@@ -1,4 +1,4 @@
-import { supabaseAdmin, isAdmin } from "@/lib/supabase-server";
+import { supabaseAdmin } from "@/lib/supabase-server";
 import { handle, body, HttpError, requireGroupMod } from "@/lib/api";
 import { json } from "@/lib/util";
 import {
@@ -28,7 +28,7 @@ export const POST = handle(async (req) => {
   }>(req);
   const s = sessionId ? await getSession(sessionId) : null;
   if (!s) throw new HttpError(404, "Session not found");
-  const { uid } = await requireGroupMod(s.group_id);
+  const { admin } = await requireGroupMod(s.group_id);
   // The awards ceremony runs after the game has ended, so its two actions are the exception.
   const isAwardAction = action === "award_next" || action === "award_skip";
   if (s.ended_at && action !== "end" && !isAwardAction) throw new HttpError(400, "This session has ended");
@@ -89,6 +89,6 @@ export const POST = handle(async (req) => {
   // request anyway — hand it back directly instead, since every action here already ends with the session in
   // its final, settled shape (buildState reads whatever was just written, no extra delay needed for it to
   // "catch up").
-  const state = await buildState(finalSession, { kind: "host", igSession: await isAdmin(uid) });
+  const state = await buildState(finalSession, { kind: "host", igSession: admin });
   return json({ ok: true, state });
 });

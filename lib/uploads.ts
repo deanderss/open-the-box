@@ -96,10 +96,13 @@ export async function purgeUpload(videoId: string | null | undefined) {
  */
 export async function sweepOrphanedUploads() {
   const db = supabaseAdmin();
-  const { data: groups } = await db.from("groups").select("id");
+  // One listing of the bucket's top level gives the boxes that actually have files (one folder per box), instead
+  // of listing every box. A folder left behind by a deleted box has no rows, so its files are swept too.
+  const { data: folders } = await db.storage.from(BUCKET).list("", { limit: 1000 });
   let removed = 0;
-  for (const g of groups || []) {
-    const gid = g.id as string;
+  for (const f of folders || []) {
+    if (f.id) continue; // a loose file at the top level, not a box folder
+    const gid = f.name;
     try {
       const { data: objs } = await db.storage.from(BUCKET).list(gid, { limit: 1000 });
       if (!objs || objs.length === 0) continue;

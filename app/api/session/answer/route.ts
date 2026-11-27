@@ -14,7 +14,9 @@ export const POST = handle(async (req) => {
   // run them together instead of paying for both round trips back to back.
   const [{ data: sp }, fresh, guessed] = await Promise.all([
     db.from("session_players").select("device_token").eq("session_id", s.id).eq("player_id", playerId || "").maybeSingle(),
-    maybeAutoReveal(s, win),
+    // Only the timer matters before saving: "everyone has answered" can't be true while this player still hasn't,
+    // so that count is left to the check after the insert.
+    maybeAutoReveal(s, win, true),
     // The guess has to be someone on this box's roster.
     guessId ? db.from("players").select("id").eq("id", guessId).eq("group_id", s.group_id).maybeSingle() : null,
   ]);

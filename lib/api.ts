@@ -1,4 +1,4 @@
-import { currentUserId, isGroupMod, isAdmin, isSuspended } from "./supabase-server";
+import { currentUserId, isGroupMod, isAdmin, isSuspended, supabaseAdmin } from "./supabase-server";
 import { json } from "./util";
 
 export class HttpError extends Error {
@@ -20,10 +20,14 @@ export async function requireGroupMod(groupId: string) {
   if (!uid) throw new HttpError(401, "Please log in");
   // Both only depend on the uid we already have, not on each other — this is on the host's hot path (every
   // Next/Reveal/Skip tap), so there's no reason to pay for two sequential database round trips here.
-  const [suspended, role] = await Promise.all([isSuspended(uid), isGroupMod(uid, groupId)]);
-  if (suspended) throw new HttpError(403, "This account has been suspended");
+  // One moderators read gives both the suspension check and whether this is the admin account.
+  const [{ data: mod }, role] = await Promise.all([
+    supabaseAdmin().from("moderators").select("suspended,is_admin").eq("id", uid).maybeSingle(),
+    isGroupMod(uid, groupId),
+  ]);
+  if (mod?.suspended) throw new HttpError(403, "This account has been suspended");
   if (!role) throw new HttpError(403, "You are not a moderator of this box");
-  return { uid, role };
+  return { uid, role, admin: !!mod?.is_admin };
 }
 
 export async function requireAdmin() {

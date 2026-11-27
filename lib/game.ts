@@ -126,7 +126,7 @@ async function counts(s: SessionRow) {
   if (vid && joined > 0) {
     const { count } = await db()
       .from("responses")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("session_id", s.id)
       .eq("video_id", vid)
       .in("player_id", joinedIds);
@@ -158,11 +158,12 @@ export async function doReveal(s: SessionRow) {
 }
 
 /** Auto-reveal when everyone answered or the timer ran out (server-authoritative). */
-export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number): Promise<SessionRow> {
+export async function maybeAutoReveal(s: SessionRow, windowSeconds?: number, timerOnly = false): Promise<SessionRow> {
   if (s.state !== "playing" || !s.video_started_at || s.paused_at) return s;
   const win = windowSeconds ?? (await getWindowSeconds());
   const elapsed = (Date.now() - new Date(s.video_started_at).getTime()) / 1000;
   if (elapsed >= win) return doReveal(s);
+  if (timerOnly) return s;
   const { joined, answered } = await counts(s);
   if (joined > 0 && answered >= joined) return doReveal(s);
   return s;
@@ -465,7 +466,11 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   // Only the *current* video's responses are needed here (for "how many have answered" and the reveal's
   // guess list) — the full-history sum used to live in this same query, but that's now a tiny server-side
   // aggregate (`session_correct_counts`, kicked off below) instead of a row-per-answer-ever payload.
-  const [groupRes, rosterRes, spRes, respRes, vidsRes, directRes] = await Promise.all([
+  // Every shown video is only needed for the sender bonus (who sent it, and whether it really played). The
+  // full details (links, ratings, playability) are only needed for the current and next video, so the long
+  // per-video columns aren't re-downloaded for the whole history on every poll.
+  const detailIds = sIn.state === "finished" ? [] : Array.from(new Set([vid, needsNext ? sIn.video_order[nextIdx] : null].filter((x): x is string => !!x)));
+  const [groupRes, rosterRes, spRes, respRes, vidsRes, detailRes, directRes] = await Promise.all([
     db().from("groups").select("id,name,color,emoji").eq("id", sIn.group_id).single(),
     db().from("players").select("id,display_name,avatar_color").eq("group_id", sIn.group_id).eq("active", true).order("display_name"),
     db().from("session_players").select("player_id,device_token,joined_at").eq("session_id", sIn.id).order("joined_at"),
@@ -475,21 +480,28 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
     relevantIds.length
       ? db()
           .from("videos")
-          .select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect")
+          .select("id,submitted_by,status")
           .in("id", relevantIds)
+      : Promise.resolve({ data: [] as Pick<VideoRow, "id" | "submitted_by" | "status">[], error: null }),
+    detailIds.length
+      ? db()
+          .from("videos")
+          .select("id,platform,embed_url,source_url,submitted_by,avg_rating,rating_count,status,playability,aspect")
+          .in("id", detailIds)
       : Promise.resolve({ data: [] as VideoRow[], error: null }),
     directIds.length
       ? db().from("videos").select("id,direct_url,direct_url_expires,direct_url_source").in("id", directIds)
       : Promise.resolve({ data: [] as Pick<VideoRow, "id" | "direct_url" | "direct_url_expires" | "direct_url_source">[], error: null }),
   ]);
-  if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error || directRes.error) throw new HttpError(503, DB_DOWN);
+  if (groupRes.error || rosterRes.error || spRes.error || respRes.error || vidsRes.error || detailRes.error || directRes.error) throw new HttpError(503, DB_DOWN);
   const group = groupRes.data;
   const roster = rosterRes.data;
   const sp = spRes.data;
   const resps = respRes.data;
-  const vidsMap = new Map(((vidsRes.data as VideoRow[]) || []).map((v) => [v.id, v]));
+  const vidsMap = new Map(((vidsRes.data as Pick<VideoRow, "id" | "submitted_by" | "status">[]) || []).map((v) => [v.id, v]));
+  const detailMap = new Map(((detailRes.data as VideoRow[]) || []).map((v) => [v.id, v]));
   (directRes.data || []).forEach((r) => {
-    const row = vidsMap.get(r.id as string);
+    const row = detailMap.get(r.id as string);
     if (row) Object.assign(row, { direct_url: r.direct_url, direct_url_expires: r.direct_url_expires, direct_url_source: r.direct_url_source });
   });
 
@@ -530,7 +542,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
 
   let video: Record<string, unknown> | null = null;
   let sender: string | null = null;
-  const v = vid ? vidsMap.get(vid) : undefined;
+  const v = vid ? detailMap.get(vid) : undefined;
   if (v) {
     video = { id: v.id, platform: v.platform, embedUrl: v.embed_url, sourceUrl: v.source_url };
     sender = v.submitted_by;
@@ -539,7 +551,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
 
   // Host only: the next video in line, so the stage can load it in the background while this one plays.
   let upNext: Record<string, unknown> | null = null;
-  const nv = needsNext ? vidsMap.get(sIn.video_order[nextIdx]) : undefined;
+  const nv = needsNext ? detailMap.get(sIn.video_order[nextIdx]) : undefined;
   if (nv && (s.state === "playing" || s.state === "reveal")) {
     upNext = { id: nv.id, platform: nv.platform, embedUrl: nv.embed_url, sourceUrl: nv.source_url };
   }
@@ -634,7 +646,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
         .limit(5);
       const { count: remaining } = await db()
         .from("videos")
-        .select("*", { count: "exact", head: true })
+        .select("id", { count: "exact", head: true })
         .eq("group_id", s.group_id)
         .eq("status", "queued");
       // Awards ceremony: this game's own ratings (decoys and unrated sender answers excluded) for the videos
@@ -661,6 +673,12 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
       }
       finale = { allTime: allTime || [], remaining: remaining ?? 0, awards };
       finaleCache.set(s.id, { v: finale, until: Date.now() + 60_000 });
+      if (finaleCache.size > 200) {
+        const now = Date.now();
+        finaleCache.forEach((c, k) => {
+          if (c.until < now) finaleCache.delete(k);
+        });
+      }
     }
   }
 

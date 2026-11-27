@@ -569,3 +569,17 @@ A full review in four phases, each shipped separately: A game experience, B secu
   - upload bucket limit 25 MB (migration 1500, applied)
 
 **Verified:** `tsc`, `next build`. As the moderator role in SQL: responses, device tokens, senders and direct links are denied, while the pages' own reads (groups, players, video counts, sessions) still work. With the anon key: all of those are denied. Local dev: finale state builds, both headers are sent, keepalive without auth returns 401. **Not verified live:** Skip and answer changes in a real game.
+
+### Phase C: cost and database (no behaviour change)
+- **Per-poll video data:** `buildState` reads only `id,submitted_by,status` for every shown video (all the sender bonus needs). The full details (links, ratings, playability, aspect) come from a second query for the current and next video only, and none once the game is finished.
+- **Finale:** `finaleCache` is swept once it passes 200 entries; the queued count uses `select("id")`.
+- **Leaderboard view** (migration 1600, applied): the "videos sent" step is grouped by box and joined on it, and its session check is limited to the video's own box, so a box's leaderboard no longer scans every box (17.6 ms to 0.6 ms on the live data, identical rows). The same migration adds indexes on `responses(guessed_player_id)` and `videos(submitted_by)`, used when a box or player is deleted.
+- **Fewer fetches and round trips:**
+  - `/api/submit` only runs the platform check for links actually being added, not for duplicates or overflow
+  - the answer route checks only the timer before saving (`maybeAutoReveal(..., timerOnly)`), since "everyone answered" can't be true before this answer lands
+  - `requireGroupMod` returns `admin` from the same `moderators` read as the suspension check, so the action route drops a query
+  - the daily upload sweep lists the bucket's top level once instead of every box (this also sweeps folders left by deleted boxes)
+  - lobby polling uses the wider interval while realtime is connected (joins send a nudge)
+- **Not changed:** `getSession` still selects `*`, since nearly every caller needs `video_order`.
+
+**Verified:** `tsc`, `next build`. The state endpoint for all 9 real sessions returned the same JSON locally and on production, apart from `serverNow`. The leaderboard returned identical rows before and after. **Not compared:** the host view and a game in progress (no live game to compare against).

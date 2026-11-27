@@ -33,18 +33,15 @@ export const POST = handle(async (req) => {
   if (!urls.length) throw new HttpError(400, "Paste at least one TikTok, Instagram, Facebook or YouTube Shorts link");
 
   const { data: settings } = await db.from("app_settings").select("max_queued_videos_per_group").eq("id", 1).single();
-  const { count: queued } = await db.from("videos").select("*", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
-  let room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
+  const { count: queued } = await db.from("videos").select("id", { count: "exact", head: true }).eq("group_id", g.id).eq("status", "queued");
+  const room = (settings?.max_queued_videos_per_group ?? 300) - (queued ?? 0);
 
-  // Resolve every link first, then ask the platforms (in parallel) whether each video can play inside the game.
-  // That only decides the heads-up note: every link in a supported format is accepted either way, because the host
-  // can open the awkward ones in the app during the game.
+  // Resolve every link first (share links need a fetch to find the real video).
   const resolved = await Promise.all(
     urls.map(async (raw) => {
       const expanded = needsExpansion(raw) ? await expandUrl(raw) : raw;
       const parsed = parseVideoUrl(expanded) || parseVideoUrl(raw);
-      const media = parsed ? await checkMedia(parsed) : null;
-      return { raw, parsed, media };
+      return { raw, parsed };
     })
   );
 
@@ -57,25 +54,32 @@ export const POST = handle(async (req) => {
   const existingSet = new Set((existing || []).map((r) => r.source_url as string));
 
   type Parsed = NonNullable<(typeof resolved)[number]["parsed"]>;
-  type Media = (typeof resolved)[number]["media"];
+  type Media = Awaited<ReturnType<typeof checkMedia>> | null;
   const outcomes: { raw: string; parsed: Parsed | null; media: Media; status: "added" | "duplicate" | "invalid" | "full" }[] = [];
-  const toInsert: { parsed: Parsed; media: Media }[] = [];
   const seenInBatch = new Set<string>();
   let slotsLeft = room;
-  for (const { raw, parsed, media } of resolved) {
+  for (const { raw, parsed } of resolved) {
     if (!parsed) {
-      outcomes.push({ raw, parsed, media, status: "invalid" });
+      outcomes.push({ raw, parsed, media: null, status: "invalid" });
     } else if (existingSet.has(parsed.sourceUrl) || seenInBatch.has(parsed.sourceUrl)) {
-      outcomes.push({ raw, parsed, media, status: "duplicate" });
+      outcomes.push({ raw, parsed, media: null, status: "duplicate" });
     } else if (slotsLeft <= 0) {
-      outcomes.push({ raw, parsed, media, status: "full" });
+      outcomes.push({ raw, parsed, media: null, status: "full" });
     } else {
       seenInBatch.add(parsed.sourceUrl);
       slotsLeft--;
-      toInsert.push({ parsed, media });
-      outcomes.push({ raw, parsed, media, status: "added" });
+      outcomes.push({ raw, parsed, media: null, status: "added" });
     }
   }
+  // Only the videos actually going in the box get the platform check (in parallel), which decides the heads-up
+  // note and the saved playability. Duplicates and overflow are no longer checked for nothing. Every link in a
+  // supported format is accepted either way, because the host can open the awkward ones in the app.
+  await Promise.all(
+    outcomes.map(async (o) => {
+      if (o.status === "added" && o.parsed) o.media = await checkMedia(o.parsed);
+    })
+  );
+  const toInsert = outcomes.flatMap((o) => (o.status === "added" && o.parsed ? [{ parsed: o.parsed, media: o.media }] : []));
 
   if (toInsert.length) {
     // `ignoreDuplicates` (ON CONFLICT ... DO NOTHING) is a safety net for the rare race where another request

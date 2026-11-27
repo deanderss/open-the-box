@@ -174,7 +174,7 @@ export function useGameState(
     const ms = inCeremony.current
       ? CEREMONY_POLL_MS
       : liveState.current === "lobby"
-        ? Math.max(pollMs, 4000)
+        ? Math.max(channelSubscribed.current ? widePollMs : pollMs, 4000) // joins send a realtime nudge too
         : channelSubscribed.current
           ? widePollMs
           : pollMs;
