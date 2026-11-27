@@ -261,8 +261,8 @@ function NativeBufferPreload({ src }: { src: string }) {
  * `StageNativeVideo` above — this hook just reads/triggers the same element through the ref `EmbedPlayer`
  * already holds, so no extra plumbing between the two components is needed).
  *
- * Two completely separate AirPlay APIs exist and this picks one path per mount, rather than mixing them:
- *  - **Remote Playback API** (`video.remote`, Safari 13.1+ and the modern standard): `remote.prompt()` opens
+ * Two completely separate AirPlay/cast APIs exist and this picks one path per mount, rather than mixing them:
+ *  - **Remote Playback API** (`video.remote`, Safari 13.1+ *and* Chrome/Cast): `remote.prompt()` opens
  *    the system picker; `remote.addEventListener("connect"/"disconnect"/"connecting", ...)` tracks state.
  *  - **Older WebKit AirPlay API** (iOS Safari only, still the only one on some older versions):
  *    `video.webkitShowPlaybackTargetPicker()` opens the picker; the `webkitcurrentplaybacktargetiswirelesschanged`
@@ -270,10 +270,40 @@ function NativeBufferPreload({ src }: { src: string }) {
  * Neither is in React's typings, so both are read through small `any` casts. Everything here is wrapped so
  * that any feature-detection surprise just leaves `supported: false` (no button shown) rather than throwing —
  * normal local playback must never be put at risk by this.
+ *
+ * Also tracks `ready`: whether the *current* clip's media has actually loaded far enough
+ * (`readyState >= HAVE_CURRENT_DATA`) for a cast picker to do anything useful. This used to be missing, and
+ * was the main cause of "Play on TV" being flaky: the button's own visibility was driven only by `isNativeNow`
+ * (a platform/URL check that flips the instant a new clip becomes "current"), while the `<video>` element's
+ * `src` is assigned a render later, inside `StageNativeVideo`'s own effect. A tap landing in that gap called
+ * `remote.prompt()`/`webkitShowPlaybackTargetPicker()` on a `<video>` with `networkState === NETWORK_EMPTY`,
+ * which both APIs silently ignore (by design, this hook fails open) — so the very first tap after a clip
+ * changes could do nothing, while a second tap a moment later worked. Listening directly on the element for
+ * `loadedmetadata`/`loadeddata`/`canplay`/`emptied` (rather than re-deriving it from props) means `ready`
+ * tracks the one persistent `<video>` element's actual state across every clip it ever plays, not just the
+ * first one.
  */
 function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
   const [supported, setSupported] = useState(false);
   const [casting, setCasting] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const updateReady = () => setReady(v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA);
+    updateReady();
+    v.addEventListener("loadedmetadata", updateReady);
+    v.addEventListener("loadeddata", updateReady);
+    v.addEventListener("canplay", updateReady);
+    v.addEventListener("emptied", updateReady); // fires when a new `src` resets readiness back to zero
+    return () => {
+      v.removeEventListener("loadedmetadata", updateReady);
+      v.removeEventListener("loadeddata", updateReady);
+      v.removeEventListener("canplay", updateReady);
+      v.removeEventListener("emptied", updateReady);
+    };
+  }, [videoRef]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -316,10 +346,12 @@ function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
   }, [videoRef]);
 
   // Must run synchronously inside the button's own onClick — not after an `await` — or Safari won't treat it
-  // as triggered by a user gesture and silently ignores it.
+  // as triggered by a user gesture and silently ignores it. The caller also gates the button itself on
+  // `ready` (see above) so this normally never gets reached too early, but the check is kept here too in
+  // case `trigger` is ever wired up to something else that doesn't check it first.
   const trigger = useCallback(() => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v || v.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const anyV = v as any;
     try {
@@ -344,7 +376,7 @@ function useAirPlay(videoRef: RefObject<HTMLVideoElement>) {
     }
   }, [videoRef]);
 
-  return { supported, casting, trigger };
+  return { supported, casting, ready, trigger };
 }
 
 /**
@@ -600,14 +632,34 @@ function EmbedPlayer({
   // re-asked-for every time the game moves between native and non-native clips.
   const nativeVideoRef = useRef<HTMLVideoElement>(null);
 
-  // "Play on TV": only meaningful while the current clip is actually playing through the native <video> above
-  // (an iframe embed — TikTok/YouTube/Facebook/non-direct Instagram — can't be AirPlayed as a video stream, it
-  // would just mirror the iframe). `casting` naturally flips back to false on disconnect, or stays false if
-  // the next clip isn't native and this effect's listeners don't fire — no extra teardown needed for either
-  // case, playback just continues locally exactly as it did before this feature existed.
+  // "Play on TV": true single-tap AirPlay/Remote-Playback casting only works for the current clip while it's
+  // actually playing through the native <video> above (an upload, or any platform resolved to a direct file
+  // — today just Instagram reels via `directUrl`, but this isn't Reels-specific: the same `isNativeNow` check
+  // covers every platform that has one). `casting` naturally flips back to false on disconnect, or stays
+  // false if the next clip isn't native and this effect's listeners don't fire — no extra teardown needed for
+  // either case, playback just continues locally exactly as it did before this feature existed.
+  //
+  // For every *iframe* platform (TikTok, YouTube, Facebook, or Instagram with no resolved direct link) there
+  // is no `<video>` element on our side at all — the player lives inside a cross-origin iframe we can't reach
+  // from JS — so the Remote Playback API and WebKit's AirPlay API have nothing to call `.prompt()`/
+  // `.webkitShowPlaybackTargetPicker()` on. That's a real platform limitation, not a bug: there is no way for
+  // this page to cast just those bytes to a TV. Rather than hiding "Play on TV" for four of the five accepted
+  // media types (which is the bug being fixed here — it previously only ever appeared for a resolved
+  // Instagram reel), the same button still shows for iframe clips on any browser that has *some* casting
+  // capability, and tapping it explains the limitation and points at the OS-level fallback that does work for
+  // any on-screen content: mirroring the whole screen (iOS Control Center's "Screen Mirroring", which still
+  // sends the TikTok/YouTube/Facebook player to the TV, just as mirrored pixels instead of a native stream).
   const airplay = useAirPlay(nativeVideoRef);
-  const showAirplayButton = isNativeNow && airplay.supported;
+  // `ready` guards against the race that made casting a *native* clip flaky: the clip becomes "current"
+  // (isNativeNow flips true) a render before the <video>'s `src` is actually assigned, so a tap landing in
+  // that gap used to silently no-op. There's no equivalent readiness gate needed for the iframe/mirroring
+  // button below — it never touches the video element at all.
+  const showNativeCastButton = isNativeNow && airplay.supported && airplay.ready;
+  const showMirrorButton = !isNativeNow && !blocked && airplay.supported;
+  const showAirplayButton = showNativeCastButton || showMirrorButton;
   const showCastingPlaceholder = isNativeNow && airplay.casting;
+  const [showMirrorTip, setShowMirrorTip] = useState(false);
+  useEffect(() => setShowMirrorTip(false), [embedUrl]);
 
   // Whenever a video takes the screen, make sure the page behind it is scrolled to the top. On iPhone/iPad, taps
   // inside a cross-origin iframe get misplaced by however far the page is scrolled underneath, which is why play
@@ -742,25 +794,40 @@ function EmbedPlayer({
           know anything about AirPlay, EmbedPlayer already owns the native <video> and its ref. Lives in its
           own corner of the stage so it never competes for space with StageView's buttons row, but fades with
           the same `overlayVisible` idle timer so it doesn't sit there as one more static thing to re-encode
-          while the host isn't touching the screen. Tapping it again while already casting reopens the same
-          system picker, which is where iOS puts the "Stop Mirroring"/disconnect option — no separate
-          disconnect code path is needed here. */}
+          while the host isn't touching the screen. For a native clip, tapping it again while already casting
+          reopens the same system picker, which is where iOS puts the "Stop Mirroring"/disconnect option — no
+          separate disconnect code path is needed here. For an iframe clip (see `showMirrorButton` above) it
+          instead opens a small tip explaining the mirroring fallback, since there's nothing to hand a native
+          picker. */}
       {fullscreen && showAirplayButton && (
         <div
-          className={`pointer-events-none absolute bottom-0 right-0 z-[8] pb-4 pr-4 transition-opacity duration-200 ${
-            overlayVisible ? "opacity-100" : "opacity-0"
+          className={`absolute bottom-0 right-0 z-[8] flex flex-col items-end gap-2 pb-4 pr-4 transition-opacity duration-200 ${
+            overlayVisible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
           }`}
           style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
         >
+          {showMirrorTip && (
+            <div className="max-w-[15rem] rounded-2xl bg-night p-3 text-left text-xs text-white shadow-chunky">
+              <p className="mb-1 font-display text-sm">📺 Playing {site} on a TV</p>
+              <p className="text-white/70">
+                {site} plays inside its own player here, so this can&apos;t send just the video to a TV. Open
+                Control Center and tap <span className="text-white">Screen Mirroring</span> to show the whole
+                screen instead.
+              </p>
+              <button type="button" className="mt-2 underline" onClick={() => setShowMirrorTip(false)}>
+                Got it
+              </button>
+            </div>
+          )}
           <button
             type="button"
-            className="btn btn-ghost btn-sm pointer-events-auto"
+            className="btn btn-ghost btn-sm"
             tabIndex={overlayVisible ? undefined : -1}
             aria-hidden={!overlayVisible}
-            aria-label={airplay.casting ? "Stop playing on TV" : "Play on TV"}
-            onClick={airplay.trigger}
+            aria-label={showNativeCastButton ? (airplay.casting ? "Stop playing on TV" : "Play on TV") : "How to play on TV"}
+            onClick={showNativeCastButton ? airplay.trigger : () => setShowMirrorTip((v) => !v)}
           >
-            <span aria-hidden>📺</span> {airplay.casting ? "On TV" : "Play on TV"}
+            <span aria-hidden>📺</span> {showNativeCastButton && airplay.casting ? "On TV" : "Play on TV"}
           </button>
         </div>
       )}
