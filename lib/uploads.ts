@@ -9,7 +9,11 @@ import { HttpError } from "./api";
  */
 
 export const BUCKET = "box-videos";
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // the free Supabase plan's per-file limit
+// The free Supabase plan's actual per-file limit is 50 MB, but a phone-recorded clip long enough to need
+// anywhere near that is already well past how long a round of this game should take to watch and guess on —
+// halving it to 25 MB costs nothing a real clip needs and halves the worst-case storage/egress per upload on
+// a plan where both are the tightest constraint.
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const MAX_UPLOADS_PER_BOX = 40; // keeps a box well inside the 1 GB free storage quota
 export const MAX_FILES_PER_SUBMIT = 5;
 /** Project-wide ceiling for files waiting to be played. The free plan's quota is 1 GB; stay clear of it. */
@@ -81,6 +85,43 @@ export async function purgeUpload(videoId: string | null | undefined) {
   } catch {
     /* best effort: the box-deletion cleanup will catch any leftovers */
   }
+}
+
+/**
+ * Daily cleanup (called from the keepalive cron): delete any file sitting in storage that no `videos` row
+ * points at any more — a half-finished upload where the phone never called `/api/upload/finish` (tab closed
+ * mid-submit, a dropped connection), or `/api/upload/start`'s own abandoned-upload sweep missing one. Storage's
+ * `list()` only looks one folder level deep, so this walks it one group at a time (the exact layout every
+ * upload already uses: `{groupId}/{uuid}.ext`) rather than attempting a bucket-wide listing.
+ */
+export async function sweepOrphanedUploads() {
+  const db = supabaseAdmin();
+  const { data: groups } = await db.from("groups").select("id");
+  let removed = 0;
+  for (const g of groups || []) {
+    const gid = g.id as string;
+    try {
+      const { data: objs } = await db.storage.from(BUCKET).list(gid, { limit: 1000 });
+      if (!objs || objs.length === 0) continue;
+      const { data: rows } = await db.from("videos").select("storage_path").eq("group_id", gid).not("storage_path", "is", null);
+      const kept = new Set((rows || []).map((r) => r.storage_path as string));
+      // An hour-old safety margin: a file can legitimately sit in storage with no `videos` row for the few
+      // seconds between the upload finishing and `/api/upload/finish` inserting the row — this cron only
+      // ever runs about once a day, but there's no reason to risk racing a submission that's still in flight.
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      const orphans = objs
+        .filter((o) => !o.created_at || new Date(o.created_at).getTime() < hourAgo)
+        .map((o) => `${gid}/${o.name}`)
+        .filter((path) => !kept.has(path));
+      if (orphans.length) {
+        await db.storage.from(BUCKET).remove(orphans);
+        removed += orphans.length;
+      }
+    } catch {
+      /* best effort: move on to the next group rather than letting one bad listing stop the whole sweep */
+    }
+  }
+  return removed;
 }
 
 /** Remove every uploaded file of these boxes (call before deleting the boxes). Also sweeps abandoned half-uploads. */

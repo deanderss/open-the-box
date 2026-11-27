@@ -280,6 +280,24 @@ export async function finishSession(s: SessionRow) {
   return result;
 }
 
+/**
+ * Daily cleanup (called from the keepalive cron): auto-end any session a moderator started and then just
+ * walked away from — no "Finished" tap, no "Pause & exit", the tab or the whole device just gone — left
+ * sitting open for more than 24 hours. Each open session pins down its box's one 4-letter room code
+ * (`sessions_one_open_per_group_idx`/`sessions_active_code_idx` both key off `ended_at is null`) and keeps
+ * showing up as "live" on the group picker and admin pages for no reason. Matches what a moderator pressing
+ * "Finished" does to the row (`endSession`), just triggered by time instead of a tap.
+ */
+export async function endStaleSessions() {
+  const { data } = await db()
+    .from("sessions")
+    .update({ state: "finished", ended_at: new Date().toISOString() })
+    .is("ended_at", null)
+    .lt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+    .select("id");
+  return (data || []).length;
+}
+
 export async function endSession(s: SessionRow) {
   const { data } = await db()
     .from("sessions")
