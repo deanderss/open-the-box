@@ -189,9 +189,12 @@ const NEGATIVE_TTL_MS = 10 * 60 * 1000;
 const negativeCache = new Map<string, number>(); // key -> don't bother retrying before this (epoch ms)
 
 /** Resolve a reel/post to a direct playable URL, or null if it can't be. Fails open: never throws. */
-export async function resolveInstagramVideo(embedUrl: string, sourceUrl: string): Promise<DirectVideo | null> {
+export async function resolveInstagramVideo(embedUrl: string, sourceUrl: string, opts: { allowSession?: boolean } = {}): Promise<DirectVideo | null> {
+  const allowSession = !!opts.allowSession;
   const shortcode = shortcodeOf(sourceUrl) ?? shortcodeOf(embedUrl);
-  const key = shortcode ?? embedUrl;
+  // Separate entries per mode: a miss without the spare account must not block a later admin lookup, and an
+  // in-flight session lookup must never be handed to someone who isn't allowed to use it.
+  const key = `${shortcode ?? embedUrl}:${allowSession ? "s" : "a"}`;
   const now = Date.now();
   const blockedUntil = negativeCache.get(key);
   if (blockedUntil && blockedUntil > now) return null;
@@ -200,7 +203,7 @@ export async function resolveInstagramVideo(embedUrl: string, sourceUrl: string)
   const p = (async () => {
     const direct = await anonymous(embedUrl);
     if (direct) return direct;
-    if (!shortcode) return null;
+    if (!shortcode || !allowSession) return null;
     return await loggedIn(embedUrl, shortcode);
   })()
     .then((result) => {

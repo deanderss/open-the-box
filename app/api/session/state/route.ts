@@ -35,11 +35,12 @@ export const GET = handle(async (req) => {
   // next video in line) are only for a logged-in moderator of THIS box. A sessionId alone isn't a secret —
   // every phone is handed one on join to subscribe to the realtime channel — so anyone else with it just
   // gets the plain anonymous view instead.
+  const hostAuth = !(playerId && token) && sessionId ? await isHostAuthorized(sessionId, s.group_id, req) : null;
   const viewer =
     playerId && token
       ? ({ kind: "player", playerId, deviceToken: token } as const)
-      : sessionId && (await isHostAuthorized(sessionId, s.group_id, req))
-        ? ({ kind: "host" } as const)
+      : hostAuth?.ok
+        ? ({ kind: "host", igSession: hostAuth.admin } as const)
         : ({ kind: "anon" } as const);
   const state = await buildState(s, viewer);
   return json(state);

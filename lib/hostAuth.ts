@@ -1,4 +1,4 @@
-import { currentUserId, isGroupMod } from "./supabase-server";
+import { currentUserId, isGroupMod, isAdmin } from "./supabase-server";
 
 /**
  * The host screen's `sessionId` is handed to every phone on join (it's how they subscribe to the realtime
@@ -11,7 +11,7 @@ import { currentUserId, isGroupMod } from "./supabase-server";
  * the session plus a hash of the request's cookies (never the raw cookie value, so nothing sensitive sits in
  * memory any longer than it takes to hash it).
  */
-const cache = new Map<string, { ok: boolean; until: number }>();
+const cache = new Map<string, { ok: boolean; admin: boolean; until: number }>();
 // A real "no, you're not a moderator of this box" is worth caching for a while (it won't flip true on its
 // own). But a brief Supabase Auth hiccup fails closed into that same `ok: false` — caching that for a full
 // minute used to drop the host to the plain anonymous player view for a minute on every poll: no `directUrl`
@@ -28,27 +28,34 @@ function hashCookies(req: Request) {
   return h.toString(36);
 }
 
-export async function isHostAuthorized(sessionId: string, groupId: string, req: Request): Promise<boolean> {
+/** `admin` = the signed-in moderator is the admin account (the only one allowed to use the spare Instagram session, lib/igDirect.ts). */
+export async function isHostAuthorized(sessionId: string, groupId: string, req: Request): Promise<{ ok: boolean; admin: boolean }> {
   const key = `${sessionId}:${hashCookies(req)}`;
   const now = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.until > now) return hit.ok;
+  if (hit && hit.until > now) return { ok: hit.ok, admin: hit.admin };
 
   let ok = false;
+  let admin = false;
   let ttl = DENY_TTL_MS;
   try {
     const uid = await currentUserId();
-    if (uid) ok = !!(await isGroupMod(uid, groupId));
+    if (uid) {
+      const [role, adm] = await Promise.all([isGroupMod(uid, groupId), isAdmin(uid)]);
+      ok = !!role;
+      admin = ok && adm;
+    }
   } catch {
-    ok = false; // fail closed: an auth hiccup should never leak the host view
+    ok = false;
+    admin = false; // fail closed: an auth hiccup should never leak the host view
     ttl = ERROR_TTL_MS; // ...but shouldn't look like a real, stable "no" for a whole minute either
   }
 
-  cache.set(key, { ok, until: now + ttl });
+  cache.set(key, { ok, admin, until: now + ttl });
   if (cache.size > 5000) {
     cache.forEach((v, k) => {
       if (v.until < now) cache.delete(k);
     });
   }
-  return ok;
+  return { ok, admin };
 }

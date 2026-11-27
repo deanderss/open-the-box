@@ -338,7 +338,7 @@ export async function endSession(s: SessionRow) {
   return { session: data as SessionRow };
 }
 
-type Viewer = { kind: "host" } | { kind: "player"; playerId: string; deviceToken: string } | { kind: "anon" };
+type Viewer = { kind: "host"; igSession?: boolean } | { kind: "player"; playerId: string; deviceToken: string } | { kind: "anon" };
 
 type VideoRow = {
   id: string;
@@ -368,7 +368,7 @@ type VideoRow = {
  * iframe. Only a reel confirmed *anonymously* playable (truly embeddable, no spare account involved) is ever
  * marked "ok" and left unblocked for good.
  */
-async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string }> {
+async function mediaInfo(v: VideoRow, igSession = false): Promise<{ aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string }> {
   const out: { aspect?: number; blocked?: "restricted" | "gone"; directUrl?: string } = {};
   if (v.aspect) out.aspect = v.aspect;
 
@@ -378,8 +378,10 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
   let knownOk = false; // true only once genuinely confirmed embeddable (the anonymous path), not just "has a link right now"
   if (v.platform === "instagram") {
     const expires = v.direct_url_expires ? new Date(v.direct_url_expires).getTime() : 0;
-    const knownDeadEnd = (v.playability === "restricted" || v.playability === "gone") && !hasSessionId();
-    if (v.direct_url && expires > Date.now()) {
+    const knownDeadEnd = (v.playability === "restricted" || v.playability === "gone") && !(igSession && hasSessionId());
+    // A saved link may have come from the spare account (those never mark playability "ok"), so only the admin
+    // host reuses it; everyone else only reuses a link that is known to be anonymously playable.
+    if (v.direct_url && expires > Date.now() && (igSession || v.playability === "ok")) {
       out.directUrl = v.direct_url;
       // A cached link doesn't tell us which path it came from; fall through and trust the saved playability.
     } else if (knownDeadEnd) {
@@ -388,7 +390,7 @@ async function mediaInfo(v: VideoRow): Promise<{ aspect?: number; blocked?: "res
       // don't: this is the single biggest source of per-poll latency and outbound Instagram traffic once a box
       // has a few restricted reels in it (every poll, for both the current video and the one warming up next).
     } else {
-      const direct = await resolveInstagramVideo(v.embed_url, v.source_url).catch(() => null);
+      const direct = await resolveInstagramVideo(v.embed_url, v.source_url, { allowSession: igSession }).catch(() => null);
       if (direct) {
         out.directUrl = direct.url;
         knownOk = direct.source === "anonymous";
@@ -530,7 +532,7 @@ export async function buildState(sIn: SessionRow, viewer: Viewer) {
   // The two live-platform fallback checks (when a video predates the saved playability column) run together
   // rather than one after the other.
   if (viewer.kind === "host" && (s.state === "playing" || s.state === "reveal")) {
-    const [infoV, infoN] = await Promise.all([v ? mediaInfo(v) : Promise.resolve(null), nv ? mediaInfo(nv) : Promise.resolve(null)]);
+    const [infoV, infoN] = await Promise.all([v ? mediaInfo(v, viewer.igSession) : Promise.resolve(null), nv ? mediaInfo(nv, viewer.igSession) : Promise.resolve(null)]);
     if (video && infoV) {
       if (infoV.aspect) video.aspect = infoV.aspect;
       if (infoV.blocked) video.blocked = infoV.blocked;
